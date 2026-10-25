@@ -1,0 +1,6 @@
+{
+  "name": "Monorid",
+  "description": "Binance Futures USDT-M Automatic Trading Terminal with PMax & Pro Scalper AI 5M Strategy",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
