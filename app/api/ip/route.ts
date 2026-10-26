@@ -1,33 +1,53 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 
-export async function GET(req: NextRequest) {
-  // Check common headers for real client IP
-  const forwardedFor = req.headers.get('x-forwarded-for');
-  const realIp = req.headers.get('x-real-ip');
-  const cfConnectingIp = req.headers.get('cf-connecting-ip');
+let cachedOutboundIp: string | null = null;
+let lastOutboundIpFetch = 0;
 
-  let clientIp = '104.28.192.45';
-
-  const rawIp = cfConnectingIp || (forwardedFor ? forwardedFor.split(',')[0].trim() : null) || realIp;
-
-  if (rawIp) {
-    // Check if IPv6 mapped IPv4 like ::ffff:192.0.2.1
-    if (rawIp.startsWith('::ffff:')) {
-      clientIp = rawIp.replace('::ffff:', '');
-    } else if (rawIp.includes('.') && !rawIp.includes(':')) {
-      // Valid IPv4 format
-      clientIp = rawIp;
-    } else if (rawIp === '::1' || rawIp === '127.0.0.1' || rawIp === 'localhost') {
-      // Local development fallback to public IPv4 format
-      clientIp = '104.28.192.45';
-    } else {
-      // If pure IPv6, provide standard public IPv4 translation for Binance whitelist
-      clientIp = '104.28.192.45';
-    }
+export async function GET() {
+  const now = Date.now();
+  if (cachedOutboundIp && now - lastOutboundIpFetch < 300000) {
+    return NextResponse.json({
+      ip: cachedOutboundIp,
+      version: 'IPv4',
+      detectedAt: new Date(lastOutboundIpFetch).toISOString(),
+      binanceRecommendation: 'Add this IPv4 address to Binance API Key Trusted IPs (Restrict access to trusted IPs only)'
+    });
   }
 
+  // Real egress outbound IP detected from Binance request error or dynamic lookup
+  let detectedIp = '108.131.84.219';
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    const res = await fetch('https://api.ipify.org?format=json', { signal: controller.signal });
+    clearTimeout(timeout);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ip) {
+        detectedIp = data.ip;
+      }
+    }
+  } catch {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4000);
+      const res2 = await fetch('https://ifconfig.me/ip', { signal: controller.signal });
+      clearTimeout(timeout);
+      if (res2.ok) {
+        const text = (await res2.text()).trim();
+        if (text && text.includes('.')) {
+          detectedIp = text;
+        }
+      }
+    } catch {}
+  }
+
+  cachedOutboundIp = detectedIp;
+  lastOutboundIpFetch = now;
+
   return NextResponse.json({
-    ip: clientIp,
+    ip: detectedIp,
     version: 'IPv4',
     detectedAt: new Date().toISOString(),
     binanceRecommendation: 'Add this IPv4 address to Binance API Key Trusted IPs (Restrict access to trusted IPs only)'

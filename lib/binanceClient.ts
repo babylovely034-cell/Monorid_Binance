@@ -237,9 +237,25 @@ export async function getBinanceAccountOverview(apiKey: string, apiSecret: strin
   const positionRisks = await sendSignedRequest('GET', '/fapi/v2/positionRisk', {}, apiKey, apiSecret);
 
   let openOrders: any[] = [];
+  let openOrdersError: string | null = null;
   try {
     openOrders = await sendSignedRequest('GET', '/fapi/v1/openOrders', {}, apiKey, apiSecret);
-  } catch {}
+  } catch (err: any) {
+    openOrdersError = err?.message || 'Failed to fetch openOrders';
+    const activeSymbols = Array.from(new Set(
+      (Array.isArray(positionRisks) ? positionRisks : [])
+        .filter((p: any) => parseFloat(p.positionAmt) !== 0)
+        .map((p: any) => p.symbol)
+    ));
+    for (const sym of activeSymbols) {
+      try {
+        const symOrders = await sendSignedRequest('GET', '/fapi/v1/openOrders', { symbol: sym }, apiKey, apiSecret);
+        if (Array.isArray(symOrders)) {
+          openOrders.push(...symOrders);
+        }
+      } catch {}
+    }
+  }
 
   const walletBalance = parseFloat(account.totalWalletBalance || '0');
   const availableBalance = parseFloat(account.availableBalance || '0');
@@ -295,7 +311,8 @@ export async function getBinanceAccountOverview(apiKey: string, apiSecret: strin
     availableBalance,
     unrealizedProfit,
     marginBalance,
-    openPositions
+    openPositions,
+    openOrdersError
   };
 }
 
@@ -388,13 +405,15 @@ export async function executeRealTrade(
 
   // 6. Place Stop Loss Order (STOP_MARKET)
   let stopLossOrder: any = null;
+  let stopLossError: string | null = null;
   const formattedSL = formatPrice(stopLoss, tickSize, pricePrecision);
   try {
     const slParams: Record<string, any> = {
       symbol,
       side: exitSide,
       type: 'STOP_MARKET',
-      stopPrice: formattedSL
+      stopPrice: formattedSL,
+      workingType: 'MARK_PRICE'
     };
     if (isDualSide) {
       slParams.positionSide = side === 'LONG' ? 'LONG' : 'SHORT';
@@ -404,19 +423,22 @@ export async function executeRealTrade(
       slParams.closePosition = 'true';
     }
     stopLossOrder = await sendSignedRequest('POST', '/fapi/v1/order', slParams, apiKey, apiSecret);
-  } catch (slErr) {
+  } catch (slErr: any) {
+    stopLossError = slErr?.message || String(slErr);
     console.error(`Failed to place Stop Loss for ${symbol}:`, slErr);
   }
 
   // 7. Place Take Profit Order (TAKE_PROFIT_MARKET)
   let takeProfitOrder: any = null;
+  let takeProfitError: string | null = null;
   const formattedTP = formatPrice(takeProfit, tickSize, pricePrecision);
   try {
     const tpParams: Record<string, any> = {
       symbol,
       side: exitSide,
       type: 'TAKE_PROFIT_MARKET',
-      stopPrice: formattedTP
+      stopPrice: formattedTP,
+      workingType: 'MARK_PRICE'
     };
     if (isDualSide) {
       tpParams.positionSide = side === 'LONG' ? 'LONG' : 'SHORT';
@@ -426,7 +448,8 @@ export async function executeRealTrade(
       tpParams.closePosition = 'true';
     }
     takeProfitOrder = await sendSignedRequest('POST', '/fapi/v1/order', tpParams, apiKey, apiSecret);
-  } catch (tpErr) {
+  } catch (tpErr: any) {
+    takeProfitError = tpErr?.message || String(tpErr);
     console.error(`Failed to place Take Profit for ${symbol}:`, tpErr);
   }
 
@@ -442,7 +465,9 @@ export async function executeRealTrade(
     stopLossOrderId: stopLossOrder?.orderId,
     takeProfitOrderId: takeProfitOrder?.orderId,
     stopLoss: parseFloat(formattedSL),
-    takeProfit: parseFloat(formattedTP)
+    takeProfit: parseFloat(formattedTP),
+    stopLossError,
+    takeProfitError
   };
 }
 

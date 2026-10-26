@@ -169,16 +169,13 @@ export default function HomePage() {
   }, []);
 
   // 2. Fetch Live Binance Account Overview & Positions
-  const syncAccountData = async (apiKey: string, apiSecret: string) => {
-    if (!apiKey || !apiSecret) return;
-
+  const syncAccountData = async (apiKey?: string, apiSecret?: string) => {
     try {
-      const res = await fetch('/api/binance/account', {
-        headers: {
-          'x-binance-api-key': apiKey,
-          'x-binance-api-secret': apiSecret
-        }
-      });
+      const headers: Record<string, string> = {};
+      if (apiKey) headers['x-binance-api-key'] = apiKey;
+      if (apiSecret) headers['x-binance-api-secret'] = apiSecret;
+
+      const res = await fetch('/api/binance/account', { headers });
       const data = await res.json();
 
       if (res.ok && data.success) {
@@ -406,11 +403,16 @@ export default function HomePage() {
   useEffect(() => {
     syncRealTickers();
     syncTopMoversKlines();
+    syncAccountData(settings.apiKey, settings.apiSecret);
     const tickerInterval = setInterval(syncRealTickers, 20000);
     const klinesInterval = setInterval(syncTopMoversKlines, 30000);
+    const accInterval = setInterval(() => {
+      syncAccountData(settings.apiKey, settings.apiSecret);
+    }, 15000);
     return () => {
       clearInterval(tickerInterval);
       clearInterval(klinesInterval);
+      clearInterval(accInterval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -697,10 +699,29 @@ export default function HomePage() {
       addLog(
         'EXECUTION',
         'SUCCESS',
-        `[BINANCE LIVE FILLS] Real ${side} order executed for ${symbol} @ $${executedPrice.toFixed(4)}. Order ID: ${trade.entryOrderId}. Leverage: ${leverage}x (${signalStrength}). Margin: $${margin.toFixed(2)}. SL: $${trade.stopLoss} (Swing ${isBuyExpected ? 'Low' : 'High'}), Liq: $${liquidationPrice.toFixed(4)} (Shield Active), TP: $${trade.takeProfit} (1:2 RR).`,
+        `[BINANCE LIVE FILLS] Real ${side} order executed for ${symbol} @ ${executedPrice.toFixed(4)}. Order ID: ${trade.entryOrderId}. Leverage: ${leverage}x (${signalStrength}). Margin: ${margin.toFixed(2)}. SL: ${trade.stopLoss} (Swing ${isBuyExpected ? 'Low' : 'High'}), Liq: ${liquidationPrice.toFixed(4)} (Shield Active), TP: ${trade.takeProfit} (1:2 RR).`,
         symbol,
         category
       );
+
+      if (trade.stopLossError) {
+        addLog(
+          'EXECUTION',
+          'WARNING',
+          `[STOP LOSS WARNING] Primary order placed but Stop Loss order was rejected by Binance for ${symbol}: ${trade.stopLossError}`,
+          symbol,
+          category
+        );
+      }
+      if (trade.takeProfitError) {
+        addLog(
+          'EXECUTION',
+          'WARNING',
+          `[TAKE PROFIT WARNING] Primary order placed but Take Profit order was rejected by Binance for ${symbol}: ${trade.takeProfitError}`,
+          symbol,
+          category
+        );
+      }
 
       // Re-sync wallet balance after order fill
       syncAccountData(settings.apiKey, settings.apiSecret);
