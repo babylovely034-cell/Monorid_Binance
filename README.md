@@ -266,8 +266,11 @@ Deploy Monorid directly to **Aiven Runtime** with zero configuration conflicts:
    - `BINANCE_API_KEY`: Your Binance USDT-M API Key (toggle **Secret** on).
    - `BINANCE_API_SECRET`: Your Binance USDT-M API Secret (toggle **Secret** on).
    - `GEMINI_API_KEY`: *(Optional)* Gemini AI key for quantitative swarm intelligence.
+   - `APP_URL`: *(Optional)* App public URL if using custom domain.
    - `PORT`: `3000` (auto-mapped to Aiven's public HTTPS 443 reverse proxy).
+   - `HOSTNAME`: `0.0.0.0`.
    - `NODE_ENV`: `production`.
+   - `NEXT_TELEMETRY_DISABLED`: `1`.
 4. **Deploy Application**: Click **Deploy**. Aiven Runtime builds the optimized Next.js standalone production image, starts the container on `0.0.0.0:3000`, and provisions the public HTTPS endpoint.
 
 ---

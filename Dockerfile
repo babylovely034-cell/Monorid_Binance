@@ -20,6 +20,10 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
+ENV APP_URL=""
+ENV GEMINI_API_KEY=""
+ENV BINANCE_API_KEY=""
+ENV BINANCE_API_SECRET=""
 
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
