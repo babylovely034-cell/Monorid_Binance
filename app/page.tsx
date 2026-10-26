@@ -108,6 +108,7 @@ export default function HomePage() {
   const positionsRef = useRef<Position[]>(positions);
   const settingsRef = useRef<TradingSettings>(settings);
   const currentBalanceRef = useRef<number>(liveCurrentBalance);
+  const availableBalanceRef = useRef<number>(liveAvailableBalance);
   const handleTickerUpdateRef = useRef<(ticker: TickerUpdate) => void>(() => {});
   const inFlightProtectRef = useRef<Set<string>>(new Set());
   const lastProtectAttemptRef = useRef<Map<string, number>>(new Map());
@@ -124,6 +125,10 @@ export default function HomePage() {
   useEffect(() => {
     currentBalanceRef.current = liveCurrentBalance;
   }, [liveCurrentBalance]);
+
+  useEffect(() => {
+    availableBalanceRef.current = liveAvailableBalance;
+  }, [liveAvailableBalance]);
 
   // Add Log Entry Helper
   const addLog = (
@@ -275,7 +280,7 @@ export default function HomePage() {
         // Filter out position entry fills (realizedPnl === 0) so only true closed trades are processed
         const closingFills = data.trades.filter((t: any) => Math.abs(parseFloat(t.realizedPnl || '0')) > 0.000001);
 
-        const formatted: ClosedTrade[] = closingFills.map((t: any) => {
+        const formatted: ClosedTrade[] = closingFills.map((t: any): ClosedTrade => {
           const qty = parseFloat(t.qty);
           const price = parseFloat(t.price);
           const commission = parseFloat(t.commission || '0');
@@ -304,7 +309,7 @@ export default function HomePage() {
             exitReason: realizedPnl > 0 ? 'TAKE_PROFIT' : 'STOP_LOSS',
             riskRewardAchieved: realizedPnl > 0 ? 2.0 : -1.0
           };
-        }).sort((a, b) => b.exitTime - a.exitTime); // Newest first
+        }).sort((a: ClosedTrade, b: ClosedTrade) => b.exitTime - a.exitTime); // Newest first
 
         setClosedTrades(formatted);
       }
