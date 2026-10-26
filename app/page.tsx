@@ -52,7 +52,7 @@ const DEFAULT_SETTINGS: TradingSettings = {
   takerFeeRate: 0.0005, // 0.05% standard Binance USDT-M taker fee
   makerFeeRate: 0.0002, // 0.02%
   swingLookbackBars: 5,
-  maxOpenPositions: 5,
+  maxOpenPositions: 10,
   autoTradingEnabled: true,
   autoShieldEnabled: true,
   useTrailingStop: false,
@@ -191,6 +191,8 @@ export default function HomePage() {
 
         setLiveCurrentBalance(wallet);
         setLiveAvailableBalance(available);
+        currentBalanceRef.current = wallet;
+        availableBalanceRef.current = available;
 
         setLiveStartingBalance(prev => {
           if (prev === 0 && wallet > 0) {
@@ -547,7 +549,8 @@ export default function HomePage() {
 
   // 7. Real Trade Execution on Binance USDT-M Futures
   const executeTrade = async (symbol: string, category: string, side: 'LONG' | 'SHORT') => {
-    const curBalance = currentBalanceRef.current;
+    // Evaluate trade sizing against free available margin so we do not over-allocate committed margin
+    const curBalance = availableBalanceRef.current > 0 ? availableBalanceRef.current : currentBalanceRef.current;
 
     // Requirement: "Keep 1.20$ balance in my account if our balance below 1.20$ no trade executed. Waiting for balance available"
     const marginAllocation = calculateTradeMarginAllocation(curBalance, 0.10, 1.20);
@@ -894,9 +897,22 @@ export default function HomePage() {
   useEffect(() => {
     if (!settings.autoTradingEnabled) return;
 
+    let lastCapacityLog = 0;
     const interval = setInterval(() => {
       const openSymbols = new Set(positionsRef.current.map(p => p.symbol));
-      if (openSymbols.size >= settingsRef.current.maxOpenPositions) return;
+      const maxPositions = settingsRef.current.maxOpenPositions;
+      if (openSymbols.size >= maxPositions) {
+        const now = Date.now();
+        if (now - lastCapacityLog > 60000) {
+          addLog(
+            'EXECUTION',
+            'INFO',
+            `Max position capacity reached: ${openSymbols.size}/${maxPositions} trades running. Free usable balance is reserved; waiting for a trade to hit TP or SL before opening new positions.`
+          );
+          lastCapacityLog = now;
+        }
+        return;
+      }
 
       for (const cat of categories) {
         for (const asset of cat.assets) {

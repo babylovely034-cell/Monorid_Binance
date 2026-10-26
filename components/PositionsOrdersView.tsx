@@ -311,7 +311,7 @@ export default function PositionsOrdersView({
                           </span>
                         </div>
                         <span className="text-[10px] text-slate-500 block">
-                          Entered {new Date(pos.entryTime || Date.now()).toLocaleTimeString()}
+                          Entered {new Date(pos.entryTime || 0).toLocaleTimeString()}
                         </span>
                       </td>
 

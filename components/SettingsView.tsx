@@ -282,6 +282,40 @@ export default function SettingsView({
           </p>
         </div>
 
+        {/* SECTION 2.6: Max Open Positions Limit */}
+        <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-5 shadow-sm space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Sliders className="w-5 h-5 text-cyan-400" />
+              <div>
+                <h3 className="text-sm font-bold text-white">Maximum Simultaneous Open Positions</h3>
+                <p className="text-xs text-slate-400">Controls how many concurrent trades the autonomous swarm fleet can execute (1 to 15).</p>
+              </div>
+            </div>
+            <span className="text-lg font-mono font-bold text-cyan-400 px-3 py-1 bg-cyan-950/60 border border-cyan-500/30 rounded-lg">
+              {formData.maxOpenPositions || 10} Trades
+            </span>
+          </div>
+
+          <div className="flex items-center gap-4 pt-2">
+            <input
+              type="range"
+              min="1"
+              max="15"
+              step="1"
+              value={formData.maxOpenPositions || 10}
+              onChange={(e) => setFormData(prev => ({ ...prev, maxOpenPositions: parseInt(e.target.value, 10) }))}
+              className="w-full accent-cyan-400 cursor-pointer h-2 bg-slate-800 rounded-lg"
+            />
+          </div>
+          <div className="flex justify-between text-[11px] font-mono text-slate-500">
+            <span>1 (Conservative)</span>
+            <span>5 (Default)</span>
+            <span>10 (Full 10-Agent Swarm)</span>
+            <span>15 (Maximum)</span>
+          </div>
+        </div>
+
         {/* SECTION 3: Strictly Locked Strategy Parameters (Autonomous & Non-Editable) */}
         <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
           <div className="flex items-center justify-between">
