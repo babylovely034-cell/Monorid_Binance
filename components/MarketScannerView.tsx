@@ -121,9 +121,9 @@ export default function MarketScannerView({
               1
             </div>
             <div>
-              <span className="font-bold text-emerald-400 block">PMax Signal (5m TF)</span>
+              <span className="font-bold text-emerald-400 block">Primary Trend Engine (5m TF)</span>
               <span className="text-slate-400 text-[11px]">
-                MAvg (hl2 EMA 10) crossover PMax line triggers Buy; crossunder triggers Sell.
+                MAvg dynamic trailing stop filter triggers primary directional bias.
               </span>
             </div>
           </div>
@@ -133,7 +133,7 @@ export default function MarketScannerView({
               2
             </div>
             <div>
-              <span className="font-bold text-amber-400 block">Pro Scalper AI Zero Gate</span>
+              <span className="font-bold text-amber-400 block">Composite Momentum Confirmation Gate</span>
               <span className="text-slate-400 text-[11px]">
                 Buy requires Osc &gt; 0. Sell requires Osc &lt; 0. <em>No confirmation no trade!</em>
               </span>
@@ -309,8 +309,8 @@ export default function MarketScannerView({
                         <th className="py-2 px-3">Asset</th>
                         <th className="py-2 px-3 text-right">Price</th>
                         <th className="py-2 px-3 text-right">24h Change</th>
-                        <th className="py-2 px-3 text-center">PMax Band</th>
-                        <th className="py-2 px-3 text-center">Pro Scalper (0)</th>
+                        <th className="py-2 px-3 text-center">Trend State</th>
+                        <th className="py-2 px-3 text-center">Momentum Osc</th>
                         <th className="py-2 px-3 text-right font-bold text-amber-300">Trade PnL %</th>
                         <th className="py-2 px-3 text-right">Action</th>
                       </tr>
@@ -491,8 +491,8 @@ export default function MarketScannerView({
                   <th className="py-3 px-4 text-right">Price</th>
                   <th className="py-3 px-4 text-right">24h Change</th>
                   <th className="py-3 px-4 text-right">24h Volume</th>
-                  <th className="py-3 px-4 text-center">PMax State</th>
-                  <th className="py-3 px-4 text-center">Pro Scalper AI Osc</th>
+                  <th className="py-3 px-4 text-center">Trend State</th>
+                  <th className="py-3 px-4 text-center">Composite Osc</th>
                   <th className="py-3 px-4 text-center">Confirmation</th>
                   <th className="py-3 px-4 text-right">Swing SL / 1:2 TP</th>
                   <th className="py-3 px-4 text-right">Action</th>

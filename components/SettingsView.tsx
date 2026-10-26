@@ -54,22 +54,30 @@ export default function SettingsView({
     setIsTesting(true);
     setTestResult(null);
     try {
-      const ok = await onTestApiConnection();
-      if (ok) {
+      const res = await fetch('/api/binance/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apiKey: formData.apiKey,
+          apiSecret: formData.apiSecret
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
         setTestResult({
           success: true,
-          message: 'Connection validated successfully! Binance USDT-M Futures endpoint reachable with whitelisted IP permissions.'
+          message: data.message || `Connected to Binance Futures! Latency: ${data.pingMs || 0}ms.`
         });
       } else {
         setTestResult({
           success: false,
-          message: 'API Key or Secret is missing or invalid. Please ensure keys are entered or use Paper Trading mode.'
+          message: data.message || 'API Key or Secret is invalid or Binance Futures permission is not enabled.'
         });
       }
     } catch (e: any) {
       setTestResult({
         success: false,
-        message: e?.message || 'Connection test failed'
+        message: e?.message || 'Connection test failed. Please verify network access.'
       });
     } finally {
       setIsTesting(false);
@@ -162,33 +170,24 @@ export default function SettingsView({
               <h3 className="text-sm font-bold text-white">Binance Futures API Credentials</h3>
             </div>
             <div className="flex items-center gap-2">
-              <span className={`text-[11px] font-mono px-2 py-0.5 rounded font-bold ${
-                formData.isLiveTrading 
-                  ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' 
-                  : 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
-              }`}>
-                {formData.isLiveTrading ? 'LIVE BINANCE FUTURES API' : 'PAPER TRADING SIMULATION'}
+              <span className="text-[11px] font-mono px-2 py-0.5 rounded font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                PRODUCTION LIVE BINANCE FUTURES
               </span>
             </div>
           </div>
 
-          {/* Mode Switcher */}
-          <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg flex items-center justify-between">
+          {/* Execution Environment Info */}
+          <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-lg flex items-center justify-between">
             <div>
-              <span className="text-xs font-bold text-white block">Execution Environment</span>
+              <span className="text-xs font-bold text-white block">Execution Mode: Live Real Trading</span>
               <span className="text-[11px] text-slate-400">
-                Paper Trading mode simulates fills, swing SL, 1:2 TP and Binance taker fees with zero financial risk.
+                Direct order execution on Binance USDT-M Futures with automated Swing SL, 1:2 RR TP, and liquidation shield.
               </span>
             </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={formData.isLiveTrading}
-                onChange={(e) => setFormData({ ...formData, isLiveTrading: e.target.checked })}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-600"></div>
-            </label>
+            <span className="text-[11px] font-mono font-bold px-2.5 py-1 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">
+              REAL CAPITAL
+            </span>
           </div>
 
           {/* API Key */}

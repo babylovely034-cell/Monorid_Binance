@@ -17,6 +17,7 @@ import {
   Radio
 } from 'lucide-react';
 import { WsConnectionStatus } from '@/lib/binanceWs';
+import { MiroStyleLogo } from './MiroStyleLogo';
 
 interface NavbarProps {
   activeTab: string;
@@ -63,14 +64,7 @@ export default function Navbar({
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono font-medium bg-emerald-950/80 text-emerald-400 border border-emerald-500/30">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            WS LIVE
-          </span>
-        );
-      case 'FALLBACK_SIMULATED':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono font-medium bg-cyan-950/80 text-cyan-400 border border-cyan-500/30">
-            <Radio className="w-3 h-3 animate-spin text-cyan-400" />
-            STREAM SIM
+            BINANCE WS LIVE
           </span>
         );
       case 'CONNECTING':
@@ -107,23 +101,30 @@ export default function Navbar({
           
           {/* Brand Logo & Title */}
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-amber-500 via-orange-500 to-amber-600 flex items-center justify-center shadow-lg shadow-amber-500/20 border border-amber-400/30">
-              <TrendingUp className="w-5 h-5 text-slate-950 stroke-[2.5]" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xl font-bold tracking-tight text-white font-sans">
-                  Monorid
+            <MiroStyleLogo
+              size="md"
+              animated={true}
+              onClick={() => setActiveTab('dashboard')}
+            />
+            <div className="flex flex-col justify-center min-w-0">
+              <div className="flex items-center flex-wrap gap-2">
+                <span className="text-xl font-black tracking-[0.14em] text-white font-sans">
+                  MONORID
                 </span>
-                <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                  USDT-M
+                <span className="text-[10px] uppercase font-mono font-bold tracking-wider px-2 py-0.5 rounded bg-cyan-950/60 text-cyan-400 border border-cyan-500/40 shadow-[0_0_8px_rgba(6,182,212,0.2)]">
+                  BINANCE USDT-M
                 </span>
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
-                  5m TF
+                <span className="text-[10px] font-mono font-bold tracking-wider px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-400 border border-emerald-500/40 flex items-center gap-1.5 shadow-[0_0_8px_rgba(16,185,129,0.2)]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  24/7 AUTO
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400 hidden sm:block">
-                PMax & Pro Scalper AI (1:2 RR Swing Strategy)
+              <p className="text-[11px] font-mono text-slate-400 hidden sm:flex items-center gap-1.5 mt-0.5">
+                <span className="text-slate-300">Trading Lifestyle Quant</span>
+                <span className="text-slate-600">•</span>
+                <span className="text-cyan-400 font-semibold">5M TF</span>
+                <span className="text-slate-600">•</span>
+                <span>Dual-Engine Quant (1:2 RR Swing)</span>
               </p>
             </div>
           </div>

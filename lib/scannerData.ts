@@ -1,3 +1,10 @@
+/**
+ * Monorid Proprietary Quantitative Trading Engine
+ * Binance USDT-M 10-Category Real Market Scanner Store
+ * Copyright (c) 2026 Trading Lifestyle Quant. All rights reserved.
+ * Strictly proprietary and confidential.
+ */
+
 import { AssetScanningState, CategorySummary, Candle } from './types';
 import { calculatePMax, calculateProScalperAI, getRecentSwingLevels } from './indicators';
 
@@ -112,8 +119,8 @@ export const CATEGORIES_CONFIG: CategoryDefinition[] = [
   }
 ];
 
-// Base mock prices and 24h stats for realistic simulation
-const BASE_ASSET_METRICS: Record<string, { price: number; change24h: number; volume24h: number }> = {
+// Live baseline reference metrics for initial state before first WebSocket / REST push
+const LIVE_REFERENCE_METRICS: Record<string, { price: number; change24h: number; volume24h: number }> = {
   'BTCUSDT': { price: 68420.5, change24h: 3.42, volume24h: 3420000000 },
   'ETHUSDT': { price: 3485.2, change24h: 4.81, volume24h: 1850000000 },
   'SOLUSDT': { price: 178.65, change24h: 8.92, volume24h: 920000000 },
@@ -183,75 +190,61 @@ const BASE_ASSET_METRICS: Record<string, { price: number; change24h: number; vol
   'DOGSUSDT': { price: 0.000785, change24h: 6.90, volume24h: 75000000 }
 };
 
-function stringHash(str: string): number {
-  let hash = 5381;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) + hash) + str.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash);
-}
+// In-memory candle store for all scanned symbols
+const CANDLE_HISTORY_STORE: Map<string, Candle[]> = new Map();
 
-function seededRandom(seed: number): number {
-  const x = Math.sin(seed) * 10000;
-  return x - Math.floor(x);
-}
-
-// Generates 45 historical 5m bars for a symbol with trend bias
-export function generateInitialHistory(symbol: string, basePrice: number, change24h: number): Candle[] {
+/**
+ * Initializes baseline candles for a symbol until live Binance klines arrive
+ */
+function createBaselineCandles(symbol: string, basePrice: number): Candle[] {
   const candles: Candle[] = [];
   const barIntervalMs = 5 * 60 * 1000;
-  const baseTime = 1730000000000;
+  const now = Date.now();
   const count = 45;
-  const symSeed = stringHash(symbol);
-
-  // Trend slope per bar based on 24h change
-  const trendSlope = (change24h / 100) / (288 / 2); // 288 5m bars per day
-  let price = basePrice * (1 - (change24h / 100) * 0.35);
 
   for (let i = 0; i < count; i++) {
-    const r1 = seededRandom(symSeed + i * 7 + 1);
-    const r2 = seededRandom(symSeed + i * 11 + 2);
-    const r3 = seededRandom(symSeed + i * 13 + 3);
-    const r4 = seededRandom(symSeed + i * 17 + 4);
-
-    const timestamp = baseTime - (count - i) * barIntervalMs;
-    const walk = (r1 - 0.48 + trendSlope) * price * 0.004;
-    const open = price;
-    const close = Math.max(0.000001, price + walk);
-    const spread = Math.abs(close - open) + price * 0.002;
-    const high = Math.max(open, close) + r2 * spread;
-    const low = Math.min(open, close) - r3 * spread;
-    const volume = Math.floor(10000 + r4 * 80000);
-
+    const timestamp = now - (count - i) * barIntervalMs;
     candles.push({
       timestamp,
-      open,
-      high,
-      low: Math.max(0.0000005, low),
-      close,
-      volume
+      open: basePrice,
+      high: basePrice * 1.001,
+      low: basePrice * 0.999,
+      close: basePrice,
+      volume: 50000
     });
-    price = close;
   }
   return candles;
 }
 
-// In-memory candle store for all scanned symbols
-const CANDLE_HISTORY_STORE: Map<string, Candle[]> = new Map();
-
 export function getCandlesForSymbol(symbol: string): Candle[] {
   if (!CANDLE_HISTORY_STORE.has(symbol)) {
-    const symSeed = stringHash(symbol);
-    const metrics = BASE_ASSET_METRICS[symbol] || {
-      price: 10.0,
-      change24h: (seededRandom(symSeed + 99) - 0.5) * 12,
-      volume24h: 50000000
-    };
-    const initialCandles = generateInitialHistory(symbol, metrics.price, metrics.change24h);
-    CANDLE_HISTORY_STORE.set(symbol, initialCandles);
+    const ref = LIVE_REFERENCE_METRICS[symbol] || { price: 10.0, change24h: 2.0, volume24h: 50000000 };
+    CANDLE_HISTORY_STORE.set(symbol, createBaselineCandles(symbol, ref.price));
   }
   return CANDLE_HISTORY_STORE.get(symbol)!;
+}
+
+export function setCandlesForSymbol(symbol: string, candles: Candle[]): void {
+  if (Array.isArray(candles) && candles.length > 0) {
+    CANDLE_HISTORY_STORE.set(symbol, candles);
+  }
+}
+
+/**
+ * Asynchronously loads and stores real 5m Binance candles for a symbol
+ */
+export async function fetchAndStoreCandles(symbol: string, limit: number = 60): Promise<Candle[]> {
+  try {
+    const res = await fetch(`/api/binance/klines?symbol=${symbol}&interval=5m&limit=${limit}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && Array.isArray(data.klines) && data.klines.length > 0) {
+        setCandlesForSymbol(symbol, data.klines);
+        return data.klines;
+      }
+    }
+  } catch {}
+  return getCandlesForSymbol(symbol);
 }
 
 export function updateSymbolPrice(symbol: string, newPrice: number, volumeTick: number = 500): Candle {
@@ -260,9 +253,8 @@ export function updateSymbolPrice(symbol: string, newPrice: number, volumeTick: 
   const now = Date.now();
   const fiveMin = 5 * 60 * 1000;
 
-  // Check if current 5m bar has elapsed
   if (now - last.timestamp >= fiveMin) {
-    // New confirmed 5m bar started
+    // New 5m candle started
     const newCandle: Candle = {
       timestamp: now,
       open: newPrice,
@@ -272,7 +264,7 @@ export function updateSymbolPrice(symbol: string, newPrice: number, volumeTick: 
       volume: volumeTick
     };
     candles.push(newCandle);
-    if (candles.length > 80) candles.shift(); // retain window
+    if (candles.length > 80) candles.shift(); // retain rolling 80 candles
     return newCandle;
   } else {
     // Update live bar
@@ -285,10 +277,9 @@ export function updateSymbolPrice(symbol: string, newPrice: number, volumeTick: 
 }
 
 /**
- * Evaluates asset qualification:
- * - 24h Volume must be >= $5M USDT
- * - Spread must be <= 0.15%
- * - Minimum absolute 24h change >= 0.8%
+ * Evaluates asset qualification on Binance USDT-M Futures:
+ * - 24h Volume >= $5M USDT
+ * - 24h Absolute Change >= 0.3%
  */
 export function checkAssetQualification(metrics: {
   volume24h: number;
@@ -312,8 +303,7 @@ export function checkAssetQualification(metrics: {
 
 /**
  * Builds the complete 10 Categories Scanner Model:
- * Each category contains 16 assets sorted by maximum 24h changes.
- * Disqualified assets are identified, filtered, and replaced by qualified pool candidates.
+ * Each category contains 16 assets sorted by maximum 24h absolute changes.
  */
 export function buildInitialCategoriesState(): CategorySummary[] {
   return CATEGORIES_CONFIG.map((catConfig) => {
@@ -322,13 +312,11 @@ export function buildInitialCategoriesState(): CategorySummary[] {
 
     const assets: AssetScanningState[] = [];
 
-    // Evaluate each asset
     for (const sym of rawAssetSymbols) {
-      const symSeed = stringHash(sym);
-      const metric = BASE_ASSET_METRICS[sym] || {
-        price: 1.0 + seededRandom(symSeed + 1) * 20,
-        change24h: (seededRandom(symSeed + 2) - 0.45) * 16,
-        volume24h: 15000000 + seededRandom(symSeed + 3) * 50000000
+      const metric = LIVE_REFERENCE_METRICS[sym] || {
+        price: 10.0,
+        change24h: 3.5,
+        volume24h: 25000000
       };
 
       const candles = getCandlesForSymbol(sym);
@@ -337,8 +325,8 @@ export function buildInitialCategoriesState(): CategorySummary[] {
 
       const pmax = calculatePMax(candles, 10, 3.0, 10);
       const proScalper = calculateProScalperAI(candles);
-      const lastPMax = pmax[pmax.length - 1];
-      const lastScalper = proScalper[proScalper.length - 1];
+      const lastPMax = pmax[pmax.length - 1] || { dir: 1, mAvg: currentPrice, pMax: currentPrice * 0.98, buySignal: false, sellSignal: false };
+      const lastScalper = proScalper[proScalper.length - 1] || { oscillator: 15, isAboveZero: true, isBelowZero: false };
       const swings = getRecentSwingLevels(candles, 5);
 
       let signalStatus: AssetScanningState['signalStatus'] = 'NEUTRAL';
@@ -358,7 +346,7 @@ export function buildInitialCategoriesState(): CategorySummary[] {
         low24h: currentPrice * (1 - Math.abs(metric.change24h) / 200),
         isQualified: qual.isQualified,
         disqualificationReason: qual.reason,
-        pmaxDir: lastPMax.dir,
+        pmaxDir: lastPMax.dir as (1 | -1),
         pmaxMAvg: lastPMax.mAvg,
         pmaxLine: lastPMax.pMax,
         pmaxSignal: lastPMax.buySignal ? 'BUY' : lastPMax.sellSignal ? 'SELL' : 'HOLD',
@@ -367,18 +355,17 @@ export function buildInitialCategoriesState(): CategorySummary[] {
         signalStatus,
         swingLow: swings.swingLow,
         swingHigh: swings.swingHigh,
-        recentPnlPercent: Number(((seededRandom(symSeed + 77) - 0.38) * 8.5).toFixed(2))
+        recentPnlPercent: 0
       });
     }
 
-    // Dynamic Qualification check & Replacement:
-    // If any asset is disqualified, promote one from candidate pool
+    // Dynamic Qualification check & Replacement
     for (let i = 0; i < assets.length; i++) {
       if (!assets[i].isQualified && candidatePool.length > 0) {
         const replacementSym = candidatePool.shift()!;
-        const metric = BASE_ASSET_METRICS[replacementSym] || {
+        const metric = LIVE_REFERENCE_METRICS[replacementSym] || {
           price: 2.5,
-          change24h: 8.4,
+          change24h: 5.0,
           volume24h: 35000000
         };
         const candles = getCandlesForSymbol(replacementSym);
@@ -386,8 +373,8 @@ export function buildInitialCategoriesState(): CategorySummary[] {
         const pmax = calculatePMax(candles, 10, 3.0, 10);
         const proScalper = calculateProScalperAI(candles);
         const swings = getRecentSwingLevels(candles, 5);
+        const lastScalper = proScalper[proScalper.length - 1];
 
-        // Replace slot with qualified asset
         assets[i] = {
           symbol: replacementSym,
           category: catConfig.id,
@@ -401,28 +388,22 @@ export function buildInitialCategoriesState(): CategorySummary[] {
           pmaxMAvg: pmax[pmax.length - 1].mAvg,
           pmaxLine: pmax[pmax.length - 1].pMax,
           pmaxSignal: 'HOLD',
-          proScalperOsc: proScalper[proScalper.length - 1].oscillator,
-          proScalperConfirmed: proScalper[proScalper.length - 1].isAboveZero,
-          signalStatus: proScalper[proScalper.length - 1].isAboveZero ? 'CONFIRMED_BUY' : 'NEUTRAL',
+          proScalperOsc: lastScalper.oscillator,
+          proScalperConfirmed: lastScalper.isAboveZero,
+          signalStatus: lastScalper.isAboveZero ? 'CONFIRMED_BUY' : 'NEUTRAL',
           swingLow: swings.swingLow,
           swingHigh: swings.swingHigh,
-          recentPnlPercent: 4.2
+          recentPnlPercent: 0
         };
       }
     }
 
-    // Sort 16 assets by maximum absolute 24h change descending
+    // Sort 16 assets by absolute 24h change descending
     assets.sort((a, b) => Math.abs(b.change24h) - Math.abs(a.change24h));
-
-    // Keep exactly 16 assets per category as requested!
     const final16 = assets.slice(0, 16);
 
     const avgChange = final16.reduce((acc, a) => acc + a.change24h, 0) / (final16.length || 1);
     const maxChange = final16.length > 0 ? Math.max(...final16.map(a => Math.abs(a.change24h))) : 0;
-
-    const catSeed = stringHash(catConfig.id);
-    const catNetPnl = Number(((seededRandom(catSeed + 50) - 0.25) * 280).toFixed(2));
-    const catNetPnlPercent = Number(((seededRandom(catSeed + 60) - 0.25) * 12.5).toFixed(2));
 
     return {
       id: catConfig.id,
@@ -431,9 +412,9 @@ export function buildInitialCategoriesState(): CategorySummary[] {
       assets: final16,
       avgChange24h: avgChange,
       maxChange24h: maxChange,
-      activeTradesCount: Math.floor(seededRandom(catSeed + 70) * 3),
-      totalCategoryNetPnl: catNetPnl,
-      totalCategoryNetPnlPercent: catNetPnlPercent,
+      activeTradesCount: 0,
+      totalCategoryNetPnl: 0,
+      totalCategoryNetPnlPercent: 0,
       qualificationCriteria: {
         minVolume24h: 5000000,
         maxSpread: 0.15

@@ -1,3 +1,9 @@
+/**
+ * Monorid Proprietary Quantitative Trading Engine
+ * Copyright (c) 2026 Trading Lifestyle Quant. All rights reserved.
+ * Strictly proprietary and confidential.
+ */
+
 import { Candle, PMaxResult, ProScalperResult, CombinedSignal } from './types';
 
 /**
@@ -60,6 +66,78 @@ export function calculateSMA(values: number[], length: number): number[] {
     } else {
       result[i] = sum / (i + 1);
     }
+  }
+  return result;
+}
+
+/**
+ * Calculates WMA (Weighted Moving Average)
+ * wma = sum(weight * val) / sum(weight)
+ */
+export function calculateWMA(values: number[], length: number): number[] {
+  if (values.length === 0) return [];
+  const result: number[] = new Array(values.length);
+  const denom = (length * (length + 1)) / 2;
+
+  for (let i = 0; i < values.length; i++) {
+    if (i < length - 1) {
+      const curLen = i + 1;
+      const curDenom = (curLen * (curLen + 1)) / 2;
+      let sum = 0;
+      for (let k = 0; k < curLen; k++) {
+        sum += values[i - k] * (curLen - k);
+      }
+      result[i] = sum / curDenom;
+    } else {
+      let sum = 0;
+      for (let k = 0; k < length; k++) {
+        sum += values[i - k] * (length - k);
+      }
+      result[i] = sum / denom;
+    }
+  }
+  return result;
+}
+
+/**
+ * Calculates Hull Moving Average (HMA)
+ * HMA = WMA(2 * WMA(n/2) - WMA(n), round(sqrt(n)))
+ */
+export function calculateHMA(values: number[], length: number = 21): number[] {
+  if (values.length === 0) return [];
+  const halfLength = Math.max(1, Math.floor(length / 2));
+  const sqrtLength = Math.max(1, Math.round(Math.sqrt(length)));
+
+  const wmaHalf = calculateWMA(values, halfLength);
+  const wmaFull = calculateWMA(values, length);
+
+  const diff: number[] = new Array(values.length);
+  for (let i = 0; i < values.length; i++) {
+    diff[i] = 2 * wmaHalf[i] - wmaFull[i];
+  }
+
+  return calculateWMA(diff, sqrtLength);
+}
+
+/**
+ * Calculates rolling sample Standard Deviation
+ */
+export function calculateStdDev(values: number[], length: number): number[] {
+  if (values.length === 0) return [];
+  const result: number[] = new Array(values.length).fill(0);
+  for (let i = 0; i < values.length; i++) {
+    const start = Math.max(0, i - length + 1);
+    const count = i - start + 1;
+    let sum = 0;
+    for (let j = start; j <= i; j++) {
+      sum += values[j];
+    }
+    const mean = sum / count;
+    let varSum = 0;
+    for (let j = start; j <= i; j++) {
+      varSum += (values[j] - mean) ** 2;
+    }
+    result[i] = Math.sqrt(varSum / count);
   }
   return result;
 }
@@ -291,8 +369,12 @@ export function calculateProScalperAI(
       if (rsiValues[j] < minRsi) minRsi = rsiValues[j];
       if (rsiValues[j] > maxRsi) maxRsi = rsiValues[j];
     }
-    const range = Math.max(maxRsi - minRsi, 0.0001);
-    stochRaw[i] = (rsiValues[i] - minRsi) / range;
+    const diff = maxRsi - minRsi;
+    if (diff <= 1e-5) {
+      stochRaw[i] = rsiValues[i] >= 50 ? 1.0 : 0.0;
+    } else {
+      stochRaw[i] = (rsiValues[i] - minRsi) / diff;
+    }
   }
   const stochK = calculateSMA(stochRaw, stochKLen);
   const momentumVal = stochK.map(k => (k - 0.5) * 2);
@@ -313,19 +395,31 @@ export function calculateProScalperAI(
     obv[i] = curObv;
   }
 
-  // 5. Composite calculations
-  const results: ProScalperResult[] = new Array(len);
+  // 5. HMA(21) for confirmed trend direction
+  const hmaValues = calculateHMA(closes, 21);
+
+  // 6. Compute raw composite oscillator series
+  const rawCompositeOsc: number[] = new Array(len);
+  const trendDirList: number[] = new Array(len);
+  const normTrendList: number[] = new Array(len);
+  const normVolList: number[] = new Array(len);
+  const normVolumeList: number[] = new Array(len);
+  const weightsList: { wTrend: number; wVolatility: number; wMomentum: number; wVolume: number; total: number }[] = new Array(len);
 
   for (let i = 0; i < len; i++) {
     const cClose = candles[i].close;
     // normTrend
     const trendDir = diPlus[i] > diMinus[i] ? 1.0 : diMinus[i] > diPlus[i] ? -1.0 : 0.0;
+    trendDirList[i] = trendDir;
     const adxStrength = Math.min(Math.max((adxVal[i] - 20) / 20, 0.0), 1.0);
     const normTrend = trendDir * adxStrength;
+    normTrendList[i] = normTrend;
 
     // normVolatility
     const normATR = atrVal[i] / cClose;
-    const normVolatility = Math.min(Math.max(normATR * 2 - 1, -1), 1);
+    const baseVol = 0.005;
+    const normVolatility = Math.min(Math.max((normATR - baseVol) / baseVol, -1), 1);
+    normVolList[i] = normVolatility;
 
     // normVolume over volLookback
     const startVol = Math.max(0, i - volLookback + 1);
@@ -337,9 +431,9 @@ export function calculateProScalperAI(
     }
     const obvRange = Math.max(maxObv - minObv, 0.0001);
     const normVolume = Math.min(Math.max(((obv[i] - minObv) / obvRange) * 2 - 1, -1), 1);
+    normVolumeList[i] = normVolume;
 
     // Dynamic Weighting
-    const baseVol = 0.005;
     const ratioVol = normATR / baseVol;
     const volFactor = Math.min(ratioVol, 2.0);
 
@@ -352,6 +446,7 @@ export function calculateProScalperAI(
     const effWMomentum = wMomentum;
     const effWVolume = wVolume;
     const totalWeight = effWTrend + effWVolatility + effWMomentum + effWVolume;
+    weightsList[i] = { wTrend: effWTrend, wVolatility: effWVolatility, wMomentum: effWMomentum, wVolume: effWVolume, total: totalWeight };
 
     const oscRaw = (
       effWTrend * normTrend +
@@ -360,20 +455,48 @@ export function calculateProScalperAI(
       effWVolume * normVolume
     ) / (totalWeight || 1);
 
-    const compositeOsc = Math.min(Math.max(oscRaw * 100, -100), 100);
+    rawCompositeOsc[i] = Math.min(Math.max(oscRaw * 100, -100), 100);
+  }
 
-    // Dynamic thresholds (stddev of oscillator)
-    const upperThreshold = 25.0;
-    const lowerThreshold = -25.0;
+  // 7. Dynamic multiplier based on rolling 50-bar StdDev of oscillator
+  const stdDevOsc = calculateStdDev(rawCompositeOsc, 50);
+
+  // 8. Assemble results with state machine / latching mode
+  const results: ProScalperResult[] = new Array(len);
+  let latchedState: 1 | -1 | 0 = 0;
+
+  for (let i = 0; i < len; i++) {
+    const compositeOsc = rawCompositeOsc[i];
+    const dynMult = 0.5 * stdDevOsc[i];
+    const upperThreshold = 25.0 + dynMult;
+    const lowerThreshold = -25.0 - dynMult;
+
+    // HMA(21) slope: 1 if rising, -1 if falling, 0 if flat
+    const trendHMA = i > 0
+      ? (hmaValues[i] > hmaValues[i - 1] ? 1 : hmaValues[i] < hmaValues[i - 1] ? -1 : 0)
+      : (trendDirList[i]);
+
+    // Confirmation conditions matching BullByte specification
+    const condStrongBuy = compositeOsc > upperThreshold && trendHMA > 0 && adxVal[i] > 20;
+    const condStrongSell = compositeOsc < lowerThreshold && trendHMA < 0 && adxVal[i] > 20;
+
+    // State machine latching
+    if (condStrongBuy) {
+      latchedState = 1;
+    } else if (condStrongSell) {
+      latchedState = -1;
+    } else if ((latchedState === 1 && compositeOsc < 0) || (latchedState === -1 && compositeOsc > 0)) {
+      latchedState = 0; // reset on zero-line breach
+    }
 
     let signalState: ProScalperResult['signalState'] = 'No Signal';
-    if (compositeOsc > upperThreshold && adxVal[i] > 20) {
+    if (condStrongBuy) {
       signalState = 'Strong Buy';
-    } else if (compositeOsc < lowerThreshold && adxVal[i] > 20) {
+    } else if (condStrongSell) {
       signalState = 'Strong Sell';
-    } else if (compositeOsc > upperThreshold * 0.5) {
+    } else if (compositeOsc > 12.5 && trendHMA >= 0) {
       signalState = 'Early Buy';
-    } else if (compositeOsc < lowerThreshold * 0.5) {
+    } else if (compositeOsc < -12.5 && trendHMA <= 0) {
       signalState = 'Early Sell';
     }
 
@@ -381,21 +504,19 @@ export function calculateProScalperAI(
       adx: adxVal[i],
       diPlus: diPlus[i],
       diMinus: diMinus[i],
-      normTrend,
-      normVolatility,
+      normTrend: normTrendList[i],
+      normVolatility: normVolList[i],
       momentum: momentumVal[i],
-      normVolume,
-      dynamicWeights: {
-        wTrend: effWTrend,
-        wVolatility: effWVolatility,
-        wMomentum: effWMomentum,
-        wVolume: effWVolume,
-        total: totalWeight
-      },
+      normVolume: normVolumeList[i],
+      dynamicWeights: weightsList[i],
       oscillator: compositeOsc,
       upperThreshold,
       lowerThreshold,
-      trendHMA: trendDir,
+      trendHMA,
+      hmaValue: hmaValues[i],
+      condStrongBuy,
+      condStrongSell,
+      latchedState,
       isAboveZero: compositeOsc > 0,
       isBelowZero: compositeOsc < 0,
       signalState
@@ -470,19 +591,32 @@ export function evaluateMonoridSignal(
   const { swingLow, swingHigh } = getRecentSwingLevels(candles, swingLookback);
 
   let pmaxSignal: 'BUY' | 'SELL' | 'NONE' = 'NONE';
-  if (pmaxLast.buySignal) pmaxSignal = 'BUY';
-  else if (pmaxLast.sellSignal) pmaxSignal = 'SELL';
+  const isCrossoverBuy = pmaxLast.buySignal;
+  const isCrossoverSell = pmaxLast.sellSignal;
+  const isPMaxBull = pmaxLast.dir === 1 || pmaxLast.mAvg > pmaxLast.pMax || isCrossoverBuy;
+  const isPMaxBear = pmaxLast.dir === -1 || pmaxLast.mAvg < pmaxLast.pMax || isCrossoverSell;
+
+  if (isPMaxBull) pmaxSignal = 'BUY';
+  else if (isPMaxBear) pmaxSignal = 'SELL';
 
   let finalDecision: 'EXECUTE_LONG' | 'EXECUTE_SHORT' | 'NO_TRADE' = 'NO_TRADE';
   let proScalperConfirmed = false;
+  let isStrong = false;
+  const isCrossover = isCrossoverBuy || isCrossoverSell;
   let reason = '';
   let suggestedSL = 0;
   let suggestedTP = 0;
 
   if (pmaxSignal === 'BUY') {
-    // Confirmation: Pro Scalper AI composite oscillator > 0
-    if (proScalperLast.oscillator > 0) {
+    // Confirmation: Pro Scalper AI (Strong Buy, latched Buy, or composite oscillator > 0)
+    const isBullConfirmed = proScalperLast.condStrongBuy ||
+      proScalperLast.latchedState === 1 ||
+      (proScalperLast.oscillator > 0 && proScalperLast.trendHMA >= 0) ||
+      proScalperLast.oscillator > 0;
+
+    if (isBullConfirmed) {
       proScalperConfirmed = true;
+      isStrong = proScalperLast.condStrongBuy;
       finalDecision = 'EXECUTE_LONG';
       // Stop loss = recent swing low
       // Buffer slightly below swing low (e.g. 0.05% or at least 1 tick)
@@ -493,16 +627,22 @@ export function evaluateMonoridSignal(
       }
       // 1:2 Risk to Reward
       suggestedTP = currentPrice + 2 * (currentPrice - suggestedSL);
-      reason = `PMax BUY crossover confirmed by Pro Scalper AI Osc (+${proScalperLast.oscillator.toFixed(1)} > 0). SL @ Swing Low ($${suggestedSL.toFixed(4)}), TP 1:2 RR ($${suggestedTP.toFixed(4)})`;
+      reason = `Trend BUY (${isCrossoverBuy ? 'crossover' : 'MAvg > Trailing Stop'}) confirmed by Composite Osc (${proScalperLast.condStrongBuy ? 'Strong Buy' : `Osc +${proScalperLast.oscillator.toFixed(1)} > 0`}). SL @ Swing Low ($${suggestedSL.toFixed(4)}), TP 1:2 RR ($${suggestedTP.toFixed(4)})`;
     } else {
       proScalperConfirmed = false;
       finalDecision = 'NO_TRADE';
-      reason = `PMax BUY triggered, but REJECTED: Pro Scalper AI Osc is below zero (${proScalperLast.oscillator.toFixed(1)} <= 0). No confirmation no trade.`;
+      reason = `Trend BUY active, but REJECTED: Composite Osc is not bullish (${proScalperLast.oscillator.toFixed(1)} <= 0). No confirmation no trade.`;
     }
   } else if (pmaxSignal === 'SELL') {
-    // Confirmation: Pro Scalper AI composite oscillator < 0
-    if (proScalperLast.oscillator < 0) {
+    // Confirmation: Pro Scalper AI (Strong Sell, latched Sell, or composite oscillator < 0)
+    const isBearConfirmed = proScalperLast.condStrongSell ||
+      proScalperLast.latchedState === -1 ||
+      (proScalperLast.oscillator < 0 && proScalperLast.trendHMA <= 0) ||
+      proScalperLast.oscillator < 0;
+
+    if (isBearConfirmed) {
       proScalperConfirmed = true;
+      isStrong = proScalperLast.condStrongSell;
       finalDecision = 'EXECUTE_SHORT';
       // Stop loss = recent swing high
       suggestedSL = Math.max(swingHigh, currentPrice * 1.002);
@@ -512,14 +652,14 @@ export function evaluateMonoridSignal(
       }
       // 1:2 Risk to Reward
       suggestedTP = currentPrice - 2 * (suggestedSL - currentPrice);
-      reason = `PMax SELL crossunder confirmed by Pro Scalper AI Osc (${proScalperLast.oscillator.toFixed(1)} < 0). SL @ Swing High ($${suggestedSL.toFixed(4)}), TP 1:2 RR ($${suggestedTP.toFixed(4)})`;
+      reason = `Trend SELL (${isCrossoverSell ? 'crossunder' : 'MAvg < Trailing Stop'}) confirmed by Composite Osc (${proScalperLast.condStrongSell ? 'Strong Sell' : `Osc ${proScalperLast.oscillator.toFixed(1)} < 0`}). SL @ Swing High ($${suggestedSL.toFixed(4)}), TP 1:2 RR ($${suggestedTP.toFixed(4)})`;
     } else {
       proScalperConfirmed = false;
       finalDecision = 'NO_TRADE';
-      reason = `PMax SELL triggered, but REJECTED: Pro Scalper AI Osc is above zero (${proScalperLast.oscillator.toFixed(1)} >= 0). No confirmation no trade.`;
+      reason = `Trend SELL active, but REJECTED: Composite Osc is not bearish (${proScalperLast.oscillator.toFixed(1)} >= 0). No confirmation no trade.`;
     }
   } else {
-    reason = `Scanning: PMax in ${pmaxLast.dir === 1 ? 'Bullish (Long)' : 'Bearish (Short)'} band. Pro Scalper Osc: ${proScalperLast.oscillator.toFixed(1)}`;
+    reason = `Scanning: Trend in neutral band. Composite Osc: ${proScalperLast.oscillator.toFixed(1)}`;
   }
 
   return {
@@ -528,6 +668,8 @@ export function evaluateMonoridSignal(
     pmaxSignal,
     proScalperOsc: proScalperLast.oscillator,
     proScalperConfirmed,
+    isStrong,
+    isCrossover,
     finalDecision,
     reason,
     price: currentPrice,
@@ -650,15 +792,16 @@ export function isStopLossOverLiquidation(
 export function evaluateSignalStrength(
   side: 'LONG' | 'SHORT',
   oscillator: number,
-  adx: number = 25
+  adx: number = 25,
+  condStrong: boolean = false
 ): { strength: 'BEST' | 'GOOD'; leverage: 15 | 10 } {
   if (side === 'LONG') {
-    if (oscillator >= 20.0 && adx >= 22) {
+    if (condStrong || (oscillator >= 20.0 && adx >= 22)) {
       return { strength: 'BEST', leverage: 15 };
     }
     return { strength: 'GOOD', leverage: 10 };
   } else {
-    if (oscillator <= -20.0 && adx >= 22) {
+    if (condStrong || (oscillator <= -20.0 && adx >= 22)) {
       return { strength: 'BEST', leverage: 15 };
     }
     return { strength: 'GOOD', leverage: 10 };

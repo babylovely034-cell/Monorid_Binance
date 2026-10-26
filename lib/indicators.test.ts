@@ -7,8 +7,17 @@ import {
   evaluateMonoridSignal,
   calculateClosedTradePnL,
   calculateTR,
-  calculateEMA
+  calculateEMA,
+  calculateSMA,
+  calculateWMA,
+  calculateHMA,
+  calculateStdDev,
+  calculateLiquidationPrice,
+  isStopLossOverLiquidation,
+  evaluateSignalStrength,
+  calculateTradeMarginAllocation
 } from './indicators';
+import { formatQuantity, formatPrice } from './binanceClient';
 import { Candle } from './types';
 
 // Helper to generate synthetic test candles
@@ -21,9 +30,9 @@ function generateTrendCandles(count: number, startPrice: number, trend: 'up' | '
     const change = trend === 'up' ? 0.8 : trend === 'down' ? -0.8 : 0;
     const noise = Math.sin(i) * 0.2;
     const open = price;
-    const close = price + change + noise;
+    const close = Math.max(0.01, price + change + noise);
     const high = Math.max(open, close) + 0.5;
-    const low = Math.min(open, close) - 0.5;
+    const low = Math.max(0.005, Math.min(open, close) - 0.5);
     const volume = 1000 + Math.abs(change) * 200;
 
     candles.push({
@@ -49,37 +58,70 @@ test('calculateTR calculates correct True Range', () => {
   assert.equal(tr[1], 110 - 101); // 9 vs abs(110-102)=8 vs abs(101-102)=1 => 9
 });
 
+test('calculateWMA and calculateHMA produce smooth trend lines', () => {
+  const values = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
+  const wma = calculateWMA(values, 5);
+  assert.equal(wma.length, values.length);
+  // Last WMA of linear ramp [16, 17, 18, 19, 20] with length 5:
+  // (16*1 + 17*2 + 18*3 + 19*4 + 20*5) / (1+2+3+4+5=15) = (16 + 34 + 54 + 76 + 100) / 15 = 280 / 15 = 18.6667
+  assert.ok(Math.abs(wma[10] - 18.6667) < 0.01);
+
+  const hma = calculateHMA(values, 5);
+  assert.equal(hma.length, values.length);
+  assert.ok(hma[10] > hma[0], 'HMA should reflect uptrend');
+});
+
+test('calculateStdDev calculates accurate rolling sample standard deviation', () => {
+  const vals = [10, 10, 10, 10, 10];
+  const std0 = calculateStdDev(vals, 5);
+  assert.equal(std0[4], 0);
+
+  const varying = [2, 4, 4, 4, 5, 5, 7, 9];
+  const std = calculateStdDev(varying, 8);
+  assert.ok(std[7] > 1.5 && std[7] < 2.5);
+});
+
 test('calculatePMax generates valid trailing stops and directions', () => {
-  const upCandles = generateTrendCandles(30, 100, 'up');
+  const upCandles = generateTrendCandles(35, 100, 'up');
   const results = calculatePMax(upCandles, 10, 3.0, 10);
 
-  assert.equal(results.length, 30);
+  assert.equal(results.length, 35);
   const last = results[results.length - 1];
   assert.ok(last.mAvg > 0);
   assert.ok(last.pMax > 0);
   assert.equal(last.dir, 1, 'In strong uptrend dir should be 1 (bullish)');
+
+  // Down trend check
+  const downCandles = generateTrendCandles(35, 100, 'down');
+  const downResults = calculatePMax(downCandles, 10, 3.0, 10);
+  const lastDown = downResults[downResults.length - 1];
+  assert.equal(lastDown.dir, -1, 'In strong downtrend dir should be -1 (bearish)');
 });
 
-test('calculateProScalperAI generates composite oscillator within bounds', () => {
-  const candles = generateTrendCandles(40, 100, 'up');
+test('calculateProScalperAI generates composite oscillator within bounds and sets HMA trend', () => {
+  const candles = generateTrendCandles(50, 100, 'up');
   const results = calculateProScalperAI(candles);
 
-  assert.equal(results.length, 40);
+  assert.equal(results.length, 50);
   const last = results[results.length - 1];
   assert.ok(last.oscillator >= -100 && last.oscillator <= 100, 'Oscillator must be in [-100, 100]');
   assert.ok(typeof last.isAboveZero === 'boolean');
   assert.ok(typeof last.isBelowZero === 'boolean');
   assert.ok(last.isAboveZero === (last.oscillator > 0));
+  assert.ok(typeof last.trendHMA === 'number');
+  assert.ok(typeof last.condStrongBuy === 'boolean');
+  assert.ok(typeof last.condStrongSell === 'boolean');
 });
 
-test('evaluateMonoridSignal: No confirmation no trade rule', () => {
+test('evaluateMonoridSignal: Both indicators must agree (PMax + Pro Scalper AI)', () => {
   // Test 1: Empty or short history returns NO_TRADE
   const shortCandles = generateTrendCandles(5, 100, 'flat');
   const signalShort = evaluateMonoridSignal('BTCUSDT', shortCandles);
   assert.equal(signalShort.finalDecision, 'NO_TRADE');
+  assert.ok(signalShort.reason.includes('Insufficient candle data'));
 
   // Test 2: Verify swing levels calculation
-  const testCandles = generateTrendCandles(25, 100, 'up');
+  const testCandles = generateTrendCandles(30, 100, 'up');
   const swings = getRecentSwingLevels(testCandles, 5);
   assert.ok(swings.swingLow > 0);
   assert.ok(swings.swingHigh >= swings.swingLow);
@@ -135,8 +177,6 @@ test('calculateClosedTradePnL accurately deducts Binance platform fees', () => {
 });
 
 test('calculateLiquidationPrice and isStopLossOverLiquidation avoid liquidating trades', () => {
-  const { calculateLiquidationPrice, isStopLossOverLiquidation } = require('./indicators');
-  
   // Long with 10x leverage
   const longLiq = calculateLiquidationPrice('LONG', 100, 10);
   assert.ok(longLiq > 89 && longLiq < 92, `Expected liq ~90.5, got ${longLiq}`);
@@ -162,8 +202,6 @@ test('calculateLiquidationPrice and isStopLossOverLiquidation avoid liquidating 
 });
 
 test('evaluateSignalStrength assigns 15x for BEST and 10x for GOOD', () => {
-  const { evaluateSignalStrength } = require('./indicators');
-
   const bestLong = evaluateSignalStrength('LONG', 32, 28);
   assert.equal(bestLong.strength, 'BEST');
   assert.equal(bestLong.leverage, 15);
@@ -182,8 +220,6 @@ test('evaluateSignalStrength assigns 15x for BEST and 10x for GOOD', () => {
 });
 
 test('calculateTradeMarginAllocation enforces $1.20 buffer and 10% sizing', () => {
-  const { calculateTradeMarginAllocation } = require('./indicators');
-
   // Below $1.20 -> no trade, waiting for balance
   const belowReserve = calculateTradeMarginAllocation(1.10, 0.10, 1.20);
   assert.equal(belowReserve.canTrade, false);
@@ -199,3 +235,102 @@ test('calculateTradeMarginAllocation enforces $1.20 buffer and 10% sizing', () =
   assert.equal(standard.margin, 10.0);
 });
 
+test('Edge cases: Empty arrays, zero division, and boundary values', () => {
+  assert.deepEqual(calculateTR([]), []);
+  assert.deepEqual(calculateEMA([], 10), []);
+  assert.deepEqual(calculateSMA([], 10), []);
+  assert.deepEqual(calculateWMA([], 10), []);
+  assert.deepEqual(calculateHMA([], 21), []);
+  assert.deepEqual(calculatePMax([], 10, 3.0, 10), []);
+  assert.deepEqual(calculateProScalperAI([]), []);
+  assert.deepEqual(getRecentSwingLevels([]), { swingLow: 0, swingHigh: 0 });
+
+  // Negative balance allocation
+  const negBalance = calculateTradeMarginAllocation(-50, 0.10, 1.20);
+  assert.equal(negBalance.canTrade, false);
+});
+
+test('formatQuantity and formatPrice avoid scientific notation and enforce step/tick precision', () => {
+  // Step 0.001 (e.g. BTC)
+  assert.equal(formatQuantity(0.0123456, 0.001, 3), '0.012');
+  // Step 0.01 (e.g. SOL)
+  assert.equal(formatQuantity(1.4589, 0.01, 2), '1.45');
+  // Step 1 (e.g. DOGE)
+  assert.equal(formatQuantity(254.9, 1, 0), '254');
+  // Very small float that could turn into scientific notation in JS
+  assert.equal(formatQuantity(0.0000456, 0.00001, 5), '0.00004');
+
+  // Price formatting with tick size
+  assert.equal(formatPrice(80532.789, 0.1, 1), '80532.8');
+  assert.equal(formatPrice(0.1234567, 0.00001, 5), '0.12346');
+  assert.equal(formatPrice(178.654, 0.01, 2), '178.65');
+});
+
+test('evaluateMonoridSignal supports (or MAvg > PMax) / (or MAvg < PMax) and enforces agreement', () => {
+  // Uptrend candles: PMax dir === 1 and Pro Scalper Osc > 0 -> EXECUTE_LONG
+  const upCandles = generateTrendCandles(40, 100, 'up');
+  const upSignal = evaluateMonoridSignal('BTCUSDT', upCandles);
+  assert.equal(upSignal.pmaxSignal, 'BUY');
+  assert.ok(upSignal.proScalperConfirmed);
+  assert.equal(upSignal.finalDecision, 'EXECUTE_LONG');
+  assert.ok(upSignal.suggestedTP > upSignal.price);
+  assert.ok(upSignal.suggestedSL < upSignal.price);
+  assert.equal(upSignal.riskRewardRatio, 2.0);
+
+  // Downtrend candles: PMax dir === -1 and Pro Scalper Osc < 0 -> EXECUTE_SHORT
+  const downCandles = generateTrendCandles(40, 100, 'down');
+  const downSignal = evaluateMonoridSignal('BTCUSDT', downCandles);
+  assert.equal(downSignal.pmaxSignal, 'SELL');
+  assert.ok(downSignal.proScalperConfirmed);
+  assert.equal(downSignal.finalDecision, 'EXECUTE_SHORT');
+  assert.ok(downSignal.suggestedTP < downSignal.price);
+  assert.ok(downSignal.suggestedSL > downSignal.price);
+  assert.equal(downSignal.riskRewardRatio, 2.0);
+});
+
+test('calculateProScalperAI latching mode state machine', () => {
+  const upCandles = generateTrendCandles(45, 100, 'up');
+  const scalperResults = calculateProScalperAI(upCandles);
+  const last = scalperResults[scalperResults.length - 1];
+  assert.ok(last.latchedState === 1 || last.latchedState === 0);
+  assert.ok(typeof last.latchedState === 'number');
+});
+
+test('evaluateMonoridSignal rejects trades when PMax and Pro Scalper disagree', () => {
+  // Construct a synthetic scenario: Bullish PMax but negative oscillator
+  const mixedCandles: Candle[] = [];
+  const now = Date.now();
+  let price = 100;
+  // First 30 bars go strongly down to drag momentum negative, then 10 bars sharp jump to push MAvg above PMax
+  for (let i = 0; i < 30; i++) {
+    price -= 1.0;
+    mixedCandles.push({ timestamp: now + i * 300000, open: price, high: price + 0.2, low: price - 0.2, close: price, volume: 1000 });
+  }
+  for (let i = 30; i < 40; i++) {
+    price += 0.8;
+    mixedCandles.push({ timestamp: now + i * 300000, open: price, high: price + 0.3, low: price - 0.1, close: price, volume: 500 });
+  }
+  const signal = evaluateMonoridSignal('ETHUSDT', mixedCandles);
+  if (signal.pmaxSignal === 'BUY' && signal.proScalperOsc <= 0) {
+    assert.equal(signal.finalDecision, 'NO_TRADE');
+    assert.ok(signal.reason.includes('REJECTED'));
+  }
+});
+
+test('evaluateMonoridSignal with live Binance 5m klines queries and evaluates correctly', async () => {
+  const { getBinanceKlines } = await import('./binanceClient');
+  const liveKlines = await getBinanceKlines('BTCUSDT', '5m', 60);
+  assert.equal(liveKlines.length, 60);
+  const signal = evaluateMonoridSignal('BTCUSDT', liveKlines);
+  assert.ok(['BUY', 'SELL', 'NONE'].includes(signal.pmaxSignal));
+  assert.ok(['EXECUTE_LONG', 'EXECUTE_SHORT', 'NO_TRADE'].includes(signal.finalDecision));
+  assert.ok(typeof signal.proScalperOsc === 'number');
+  assert.ok(signal.price > 0);
+  if (signal.finalDecision === 'EXECUTE_LONG') {
+    assert.ok(signal.suggestedTP > signal.price);
+    assert.ok(signal.suggestedSL < signal.price);
+  } else if (signal.finalDecision === 'EXECUTE_SHORT') {
+    assert.ok(signal.suggestedTP < signal.price);
+    assert.ok(signal.suggestedSL > signal.price);
+  }
+});

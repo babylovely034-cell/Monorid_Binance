@@ -3,16 +3,16 @@ import './globals.css'; // Global styles
 
 export const metadata: Metadata = {
   title: 'Monorid | Binance Futures USDT-M Algo Trading Terminal',
-  description: 'Automated 5-minute algorithmic trading terminal executing PMax and Pro Scalper AI strategy with dynamic category scanners and risk management.',
+  description: 'Autonomous 5-minute algorithmic trading terminal executing proprietary dual-engine quantitative strategies with dynamic category scanners and institutional risk management by Trading Lifestyle Quant.',
   openGraph: {
     title: 'Monorid | Binance Futures USDT-M Algo Trading Terminal',
-    description: 'Automated 5-minute algorithmic trading terminal executing PMax and Pro Scalper AI strategy with dynamic category scanners and risk management.',
+    description: 'Autonomous 5-minute algorithmic trading terminal executing proprietary dual-engine quantitative strategies with dynamic category scanners and institutional risk management by Trading Lifestyle Quant.',
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Monorid | Binance Futures USDT-M Algo Trading Terminal',
-    description: 'Automated 5-minute algorithmic trading terminal executing PMax and Pro Scalper AI strategy with dynamic category scanners and risk management.',
+    description: 'Autonomous 5-minute algorithmic trading terminal executing proprietary dual-engine quantitative strategies with dynamic category scanners and institutional risk management by Trading Lifestyle Quant.',
   },
 };
 

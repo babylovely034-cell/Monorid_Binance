@@ -9,27 +9,13 @@ import {
   PnLDataPoint
 } from '@/lib/types';
 import ActualPnLChart from './ActualPnLChart';
+import { MiroStyleLogo } from './MiroStyleLogo';
+import { BotMotionIcon } from './BotMotionIcons';
 import { 
-  DollarSign,
-  Sliders,
   Zap,
-  ShieldAlert,
-  ArrowUpRight,
-  Lock,
-  Layers,
-  Activity,
-  CheckCircle,
-  TrendingUp,
-  TrendingDown,
-  Cpu,
   Shield,
-  Compass,
-  Radio,
-  ExternalLink,
-  Target,
-  BarChart2,
-  RefreshCw,
-  Flame
+  TrendingUp,
+  Compass
 } from 'lucide-react';
 
 interface DashboardMainProps {
@@ -63,22 +49,6 @@ export default function DashboardMain({
   const freeUsdt = Math.max(0, currentBalance - activeMargin);
   const marginUsedPercent = currentBalance > 0 ? (activeMargin / currentBalance) * 100 : 0;
 
-  // Helper to map category ID to typed Lucide Icon
-  const getAgentIcon = (catId: string): React.ComponentType<{ className?: string }> => {
-    switch (catId) {
-      case 'l1-mainstream': return TrendingUp;
-      case 'l2-rollups': return Activity;
-      case 'ai-big-data': return Target;
-      case 'defi-protocols': return Zap;
-      case 'meme-coins': return Shield;
-      case 'gaming-metaverse': return BarChart2;
-      case 'rwa-payments': return Layers;
-      case 'infra-depin': return Cpu;
-      case 'crosschain-interop': return RefreshCw;
-      case 'max-movers-volatility': return Flame;
-      default: return Zap;
-    }
-  };
 
   // Swarm Agent Names for the 10 Categories
   const AGENT_NAMES = [
@@ -94,8 +64,8 @@ export default function DashboardMain({
     { name: 'Surge Breakout', catId: 'max-movers-volatility' },
   ];
 
-  // User toggle for Swarm Radar fleet: default false (shows ONLY bots with open running positions)
-  const [showAllFleet, setShowAllFleet] = React.useState(false);
+  // User toggle for Swarm Radar fleet: default true to show ALL fleet bots surrounding the logo
+  const [showAllFleet, setShowAllFleet] = React.useState(true);
 
   // Map agents with their live open positions
   const agentsWithPositions = AGENT_NAMES.map(agent => {
@@ -108,18 +78,14 @@ export default function DashboardMain({
   });
 
   const activeBotAgents = agentsWithPositions.filter(a => a.isOpen);
-  // Show ONLY running position bots by default (or all fleet if toggled or if 0 positions exist)
+  // Show all fleet bots surrounding the center logo by default, or only active running positions if filtered
   const displayAgents = showAllFleet ? agentsWithPositions : (activeBotAgents.length > 0 ? activeBotAgents : agentsWithPositions);
   const isShowingOnlyActive = !showAllFleet && activeBotAgents.length > 0;
 
   return (
     <div className="space-y-5 font-sans selection:bg-cyan-500 selection:text-slate-950">
       {/* Top Status Alert Bar with Smooth Motion */}
-      <motion.div 
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-        className="bg-slate-950/90 border border-slate-800/80 rounded-xl p-3 shadow-inner font-mono text-xs flex flex-wrap items-center justify-between gap-3"
+      <div className="bg-slate-950/90 border border-slate-800/80 rounded-xl p-3 shadow-inner font-mono text-xs flex flex-wrap items-center justify-between gap-3"
       >
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-slate-300">
           <div className="flex items-center gap-1.5">
@@ -130,7 +96,7 @@ export default function DashboardMain({
             />
             <span className="text-slate-400">API:</span>
             <span className="text-emerald-400 font-bold">
-              {settings.apiKey ? 'Configured' : 'Binance USDT-M Demo'}
+              {settings.apiKey ? 'Live Connected' : 'API Key Required'}
             </span>
           </div>
 
@@ -177,7 +143,7 @@ export default function DashboardMain({
           <div className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-amber-400" />
             <span className="text-slate-400">Rule:</span>
-            <span className="text-amber-400 font-bold">PMax + Pro Scalper</span>
+            <span className="text-amber-400 font-bold">Dual-Engine Quant</span>
           </div>
         </div>
 
@@ -187,7 +153,7 @@ export default function DashboardMain({
         >
           <span>Settings & API keys</span>
         </button>
-      </motion.div>
+      </div>
 
       {/* Main 2-Column Dashboard Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
@@ -212,200 +178,253 @@ export default function DashboardMain({
               onClick={() => setShowAllFleet(prev => !prev)}
               className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700/80 hover:border-cyan-500/60 text-cyan-400 hover:text-cyan-300 text-[10px] transition-all cursor-pointer shadow-sm"
             >
-              {showAllFleet ? 'Show Running Positions Only' : 'Show All 10 Fleet'}
+              {showAllFleet ? 'Show Running Only' : 'Show All 10 Fleet'}
             </button>
           </div>
 
-          {/* Motion Graphic: Rotating 360° Radar Sweep Beam */}
-          <motion.div 
-            animate={{ rotate: 360 }}
-            transition={{ repeat: Infinity, duration: 12, ease: 'linear' }}
-            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[580px] h-[580px] sm:w-[660px] sm:h-[660px] rounded-full pointer-events-none z-0 opacity-25"
-            style={{
-              background: 'conic-gradient(from 0deg at 50% 50%, rgba(6, 182, 212, 0.45) 0deg, rgba(6, 182, 212, 0) 65deg, transparent 360deg)'
-            }}
-          />
+          {/* Central Radar Stage: Aspect-Square Arena ensuring equal distance to all sides */}
+          <div className="relative z-10 w-full flex-1 flex items-center justify-center my-auto min-h-[500px] sm:min-h-[540px] overflow-hidden">
+            <div className="relative w-full max-w-[500px] sm:max-w-[530px] aspect-square flex items-center justify-center">
 
-          {/* Motion Graphic: Concentric Radar Orbit Rings with Expanded Distance */}
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[560px] h-[560px] sm:w-[620px] sm:h-[620px] rounded-full border border-cyan-500/20 pointer-events-none" />
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] sm:w-[460px] sm:h-[460px] rounded-full border border-cyan-500/30 pointer-events-none border-dashed" />
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[220px] h-[220px] sm:w-[260px] sm:h-[260px] rounded-full border border-cyan-400/40 pointer-events-none" />
-
-          {/* Motion Graphic: Expanding Energy Pulse Rings */}
-          <motion.div 
-            animate={{ scale: [1, 1.25, 1], opacity: [0.1, 0.35, 0.1] }}
-            transition={{ repeat: Infinity, duration: 4, ease: 'easeInOut' }}
-            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[520px] h-[520px] sm:w-[580px] sm:h-[580px] rounded-full border border-cyan-400/30 pointer-events-none"
-          />
-
-          {/* SVG Overlay: High-Tech Radial Plasma Beams Connecting Core to Orbit Nodes */}
-          <svg className="absolute inset-0 w-full h-full pointer-events-none z-0" viewBox="0 0 1000 1000" preserveAspectRatio="none">
-            {displayAgents.map((agent, index) => {
-              const angleDeg = (index * 360 / displayAgents.length) - 90;
-              const angleRad = (angleDeg * Math.PI) / 180;
-              const cos = Math.cos(angleRad);
-              const sin = Math.sin(angleRad);
-              const xEnd = 500 + cos * 430;
-              const yEnd = 500 + sin * 430;
-
-              return (
-                <g key={`beam-${agent.catId}`}>
-                  {/* Glowing background laser beam line */}
-                  <line
-                    x1="500"
-                    y1="500"
-                    x2={xEnd}
-                    y2={yEnd}
-                    stroke={agent.isOpen ? 'rgba(16, 185, 129, 0.35)' : 'rgba(6, 182, 212, 0.15)'}
-                    strokeWidth={agent.isOpen ? '3' : '2'}
-                  />
-                  {/* Motion animated energy laser pulse line */}
-                  <motion.line
-                    x1="500"
-                    y1="500"
-                    x2={xEnd}
-                    y2={yEnd}
-                    stroke={agent.isOpen ? 'rgba(52, 211, 153, 0.95)' : 'rgba(56, 189, 248, 0.85)'}
-                    strokeWidth={agent.isOpen ? '2.5' : '1.8'}
-                    strokeDasharray="6 18"
-                    animate={{ strokeDashoffset: [0, -48] }}
-                    transition={{ repeat: Infinity, duration: 1.8 + (index % 3) * 0.4, ease: 'linear' }}
-                  />
-                  {/* End Particle Node */}
-                  <circle
-                    cx={xEnd}
-                    cy={yEnd}
-                    r={agent.isOpen ? '3.5' : '2.5'}
-                    fill={agent.isOpen ? '#34d399' : '#38bdf8'}
-                  />
-                </g>
-              );
-            })}
-          </svg>
-
-          {/* Central Monorid Swarm Radar Content Container */}
-          <div className="relative z-10 flex-1 flex items-center justify-center min-h-[540px] sm:min-h-[600px] my-2">
-            {/* Center Monorid Hub Card - Exact Match to Reference Dashboard Graphics */}
-            <motion.div 
-              animate={{ y: [-3, 3, -3] }}
-              transition={{ repeat: Infinity, duration: 4, ease: 'easeInOut' }}
-              whileHover={{ scale: 1.08 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={() => onNavigateTab('scanner')}
-              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 bg-slate-900/95 border-2 border-cyan-500/80 hover:border-cyan-400 p-3.5 sm:p-4 rounded-2xl text-center shadow-2xl shadow-cyan-500/30 backdrop-blur-md cursor-pointer transition-all group w-[140px] sm:w-[160px]"
-            >
-              {/* Outer Glowing Energy Halo */}
+              {/* Rotating 360° Radar Sweep Beam Centered in Arena */}
               <motion.div 
-                animate={{ opacity: [0.4, 0.85, 0.4] }}
-                transition={{ repeat: Infinity, duration: 2.5 }}
-                className="absolute -inset-1.5 rounded-2xl bg-gradient-to-r from-cyan-500/40 via-blue-500/30 to-emerald-500/40 blur-md -z-10 pointer-events-none"
+                animate={{ rotate: 360 }}
+                transition={{ repeat: Infinity, duration: 12, ease: 'linear' }}
+                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[92%] h-[92%] rounded-full pointer-events-none z-0 opacity-25"
+                style={{
+                  background: 'conic-gradient(from 0deg at 50% 50%, rgba(6, 182, 212, 0.45) 0deg, rgba(6, 182, 212, 0) 65deg, transparent 360deg)'
+                }}
               />
 
-              {/* Monorid 'M' Icon Badge */}
-              <div className="w-11 h-11 sm:w-12 sm:h-12 mx-auto rounded-xl bg-slate-950 border border-cyan-400/80 flex items-center justify-center text-cyan-400 font-black text-2xl shadow-lg shadow-cyan-500/30 mb-2 relative overflow-hidden group-hover:border-cyan-300">
-                <span className="relative z-10 drop-shadow-md">M</span>
-                <motion.div 
-                  animate={{ x: ['-100%', '100%'] }}
-                  transition={{ repeat: Infinity, duration: 2.2, ease: 'linear' }}
-                  className="absolute inset-0 bg-gradient-to-r from-transparent via-cyan-400/30 to-transparent pointer-events-none"
-                />
-              </div>
+              {/* Concentric Cybernetic Orbit Rings Centered in Arena */}
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] h-[90%] rounded-full border border-cyan-500/15 pointer-events-none animate-[spin_180s_linear_infinite]" />
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[72%] h-[72%] rounded-full border border-cyan-400/25 border-dashed pointer-events-none animate-[spin_90s_linear_infinite_reverse]" />
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[52%] h-[52%] rounded-full border border-cyan-300/30 pointer-events-none" />
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[32%] h-[32%] rounded-full border border-cyan-400/35 border-dotted pointer-events-none" />
 
-              <h3 className="text-xs sm:text-sm font-extrabold text-white tracking-wider font-mono">
-                MONORID QUANT
-              </h3>
+              {/* Motion Graphic: Expanding Energy Pulse Ring */}
+              <motion.div 
+                animate={{ scale: [1, 1.15, 1], opacity: [0.15, 0.35, 0.15] }}
+                transition={{ repeat: Infinity, duration: 4, ease: 'easeInOut' }}
+                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[82%] h-[82%] rounded-full border border-cyan-400/30 pointer-events-none"
+              />
 
-              <div className="mt-1 flex items-center justify-center gap-1.5 text-[10px] font-mono font-bold text-emerald-400">
-                <motion.span 
-                  animate={{ scale: [1, 1.4, 1] }}
-                  transition={{ repeat: Infinity, duration: 1.2 }}
-                  className="w-1.5 h-1.5 rounded-full bg-emerald-400" 
-                />
-                <span>FLEET ONLINE (10/10)</span>
-              </div>
+              {/* SVG Overlay: High-Tech Radial Laser Conduits Connecting Middle Logo to Orbit Nodes */}
+              <svg className="absolute inset-0 w-full h-full pointer-events-none z-10" viewBox="0 0 540 540">
+                <defs>
+                  <filter id="conduitGlow" x="-20%" y="-20%" width="140%" height="140%">
+                    <feGaussianBlur stdDeviation="3" result="glow" />
+                    <feMerge>
+                      <feMergeNode in="glow" />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                  </filter>
+                </defs>
 
-              <div className="mt-1.5 px-2 py-0.5 rounded bg-slate-950/90 border border-slate-800 text-[9px] font-mono text-cyan-400 font-bold flex items-center justify-center gap-1 shadow-inner">
-                <span>{activeBotAgents.length} IN POSITION</span>
-                <span className="text-slate-600">•</span>
-                <span className="text-amber-400">1.8s CYCLE</span>
-              </div>
-            </motion.div>
+                {/* Outer Cybernetic Boundary Ring */}
+                <circle cx="270" cy="270" r="248" stroke="rgba(6, 182, 212, 0.12)" strokeWidth="1" />
+                {/* Secondary Outer Dashed Guide Ring */}
+                <circle cx="270" cy="270" r="226" stroke="rgba(6, 182, 212, 0.15)" strokeWidth="0.8" strokeDasharray="2 4" />
+                {/* Primary Orbital Bot Ring: Perfectly passes through all 10 bot centers at radius 196 */}
+                <circle cx="270" cy="270" r="196" stroke="rgba(6, 182, 212, 0.22)" strokeWidth="1.2" strokeDasharray="4 4" />
+                {/* Mid Sensor Orbit Ring */}
+                <circle cx="270" cy="270" r="136" stroke="rgba(6, 182, 212, 0.18)" strokeWidth="1" strokeDasharray="3 3" />
+                {/* Core Reactor Boundary Rings */}
+                <circle cx="270" cy="270" r="36" stroke="rgba(6, 182, 212, 0.35)" strokeWidth="1.2" strokeDasharray="2 2" />
+                <circle cx="270" cy="270" r="48" stroke="rgba(6, 182, 212, 0.20)" strokeWidth="0.8" strokeDasharray="3 3" />
 
-            {/* Orbiting Bot Nodes: Rounded-xl Cards with Top Glowing Icon Box & Scan Pill */}
-            {displayAgents.map((agent, index) => {
-              const cat = categories.find(c => c.id === agent.catId);
-              const avgChange = cat ? cat.avgChange24h : 0;
-              const isPos = avgChange >= 0;
+                {displayAgents.map((agent, index) => {
+                  const angleDeg = (index * 360 / displayAgents.length) - 90;
+                  const angleRad = (angleDeg * Math.PI) / 180;
+                  const cx = 270;
+                  const cy = 270;
+                  const rInner = 36;
+                  const radiusPx = 196;
+                  const xStart = cx + rInner * Math.cos(angleRad);
+                  const yStart = cy + rInner * Math.sin(angleRad);
+                  const xEnd = cx + radiusPx * Math.cos(angleRad);
+                  const yEnd = cy + radiusPx * Math.sin(angleRad);
 
-              const openPos = agent.openPositions[0]; // First open position if running
-              const IconComp = getAgentIcon(agent.catId);
+                  return (
+                    <g key={`beam-${agent.catId}`}>
+                      {/* Laser Conduit Line from Core Edge to Bot Center */}
+                      <line
+                        x1={xStart}
+                        y1={yStart}
+                        x2={xEnd}
+                        y2={yEnd}
+                        stroke={agent.isOpen ? 'rgba(16, 185, 129, 0.65)' : 'rgba(6, 182, 212, 0.26)'}
+                        strokeWidth={agent.isOpen ? '2' : '1.2'}
+                        strokeDasharray={agent.isOpen ? 'none' : '4 4'}
+                      />
+                      {/* Moving Energy Pulse Circle */}
+                      <circle
+                        r={agent.isOpen ? '3.5' : '2.5'}
+                        fill={agent.isOpen ? '#34d399' : '#22d3ee'}
+                        filter="url(#conduitGlow)"
+                      >
+                        <animate
+                          attributeName="cx"
+                          from={xStart}
+                          to={xEnd}
+                          dur={`${1.8 + (index % 3) * 0.4}s`}
+                          repeatCount="indefinite"
+                        />
+                        <animate
+                          attributeName="cy"
+                          from={yStart}
+                          to={yEnd}
+                          dur={`${1.8 + (index % 3) * 0.4}s`}
+                          repeatCount="indefinite"
+                        />
+                      </circle>
+                      {/* Beacon Node at Bot Center Anchor Point */}
+                      <circle
+                        cx={xEnd}
+                        cy={yEnd}
+                        r={agent.isOpen ? '4' : '3'}
+                        fill={agent.isOpen ? '#10b981' : '#06b6d4'}
+                        opacity="0.85"
+                      />
+                    </g>
+                  );
+                })}
+              </svg>
 
-              const angleDeg = (index * 360 / displayAgents.length) - 90;
-              const angleRad = (angleDeg * Math.PI) / 180;
-              const cos = Math.cos(angleRad);
-              const sin = Math.sin(angleRad);
+              {/* Central Core: Middle Logo Monorid geometrically centered with equal distance to all bot nodes */}
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30 flex items-center justify-center pointer-events-none">
+                <div className="relative flex items-center justify-center pointer-events-auto">
+                  {/* Outer Glowing Energy Halo */}
+                  <motion.div 
+                    animate={{ opacity: [0.35, 0.7, 0.35], scale: [1, 1.1, 1] }}
+                    transition={{ repeat: Infinity, duration: 2.8, ease: 'easeInOut' }}
+                    className="absolute -inset-3 rounded-2xl bg-cyan-500/25 blur-xl pointer-events-none -z-10"
+                  />
 
-              return (
-                <motion.div
-                  key={agent.catId}
-                  initial={{ opacity: 0, scale: 0.5 }}
-                  animate={{ 
-                    opacity: 1, 
-                    scale: 1,
-                    y: index % 2 === 0 ? [-3, 3, -3] : [3, -3, 3]
-                  }}
-                  transition={{ 
-                    opacity: { duration: 0.4, delay: index * 0.04 },
-                    scale: { duration: 0.4, delay: index * 0.04 },
-                    y: { repeat: Infinity, duration: 3.5 + (index % 3) * 0.5, ease: 'easeInOut' }
-                  }}
-                  whileHover={{ scale: 1.1, zIndex: 30 }}
-                  onClick={() => onNavigateTab('scanner')}
-                  style={{
-                    position: 'absolute',
-                    left: `calc(50% + (${cos.toFixed(4)} * clamp(195px, 26vw, 265px)))`,
-                    top: `calc(50% + (${sin.toFixed(4)} * clamp(195px, 26vw, 265px)))`,
-                    transform: 'translate(-50%, -50%)',
-                  }}
-                  className={`z-10 rounded-xl w-[120px] sm:w-[130px] p-2.5 text-center cursor-pointer transition-all shadow-xl backdrop-blur-md group relative border ${
-                    agent.isOpen 
-                      ? 'bg-slate-900/95 border-emerald-400/90 shadow-[0_0_20px_rgba(52,211,153,0.3)]' 
-                      : 'bg-slate-900/90 hover:bg-slate-900 border-cyan-500/40 hover:border-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.15)]'
-                  }`}
-                >
-                  {/* Glowing Top Icon Box */}
-                  <div className="w-8 h-8 mx-auto rounded-lg bg-slate-950 border border-cyan-500/60 flex items-center justify-center text-cyan-400 mb-1.5 shadow-md group-hover:border-cyan-300">
-                    <IconComp className="w-4 h-4 text-cyan-400 group-hover:scale-110 transition-transform" />
+                  {/* Previous Project Logo Component: MiroStyleLogo centered at true geometric midpoint */}
+                  <motion.div 
+                    animate={{ scale: [1, 1.03, 1] }}
+                    transition={{ repeat: Infinity, duration: 3.5, ease: 'easeInOut' }}
+                    whileHover={{ scale: 1.07 }}
+                    whileTap={{ scale: 0.96 }}
+                    onClick={() => onNavigateTab('scanner')}
+                    className="relative cursor-pointer flex items-center justify-center"
+                  >
+                    <MiroStyleLogo
+                      size="md"
+                      animated={true}
+                      onClick={() => onNavigateTab('scanner')}
+                    />
+                  </motion.div>
+
+                  {/* Floating Balanced HUD Label below logo - positioned absolutely so it does NOT shift the logo center */}
+                  <div className="absolute top-[calc(100%+6px)] left-1/2 -translate-x-1/2 flex flex-col items-center text-center whitespace-nowrap pointer-events-none z-40">
+                    <span className="text-[9.5px] font-black tracking-widest text-cyan-300 font-mono drop-shadow-[0_0_8px_rgba(6,182,212,0.6)] bg-slate-950/85 px-1.5 py-0.5 rounded border border-cyan-500/30 backdrop-blur-sm">
+                      MONORID QUANT
+                    </span>
+                    <span className="text-[7.5px] font-bold tracking-widest text-slate-300 font-mono uppercase flex items-center gap-1 mt-0.5 bg-slate-950/85 px-1.5 py-0.5 rounded border border-slate-800/80 backdrop-blur-sm">
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                      FLEET ONLINE ({displayAgents.length}/{displayAgents.length})
+                    </span>
+                    <div className="mt-0.5 flex items-center gap-1 text-[7.5px] font-mono text-emerald-400 bg-emerald-950/90 px-2 py-0.5 rounded border border-emerald-500/50 shadow-[0_0_8px_rgba(16,185,129,0.25)] backdrop-blur-sm">
+                      <span>{activeBotAgents.length} IN POSITION</span>
+                      <span className="text-slate-500">•</span>
+                      <span className="text-cyan-300">1.8s CYCLE</span>
+                    </div>
                   </div>
+                </div>
+              </div>
 
-                  {/* Bot Name / Symbol Display */}
-                  <h4 className="text-[11px] font-bold text-slate-200 group-hover:text-cyan-300 transition-colors line-clamp-1 font-sans">
-                    {openPos ? openPos.symbol : agent.name}
-                  </h4>
+              {/* Orbiting Bot Nodes: Equidistant Radial Swarm Nodes Surrounding Middle Logo */}
+              {displayAgents.map((agent, index) => {
+                const cat = categories.find(c => c.id === agent.catId);
+                const avgChange = cat ? cat.avgChange24h : 0;
+                const isPos = avgChange >= 0;
 
-                  {/* Running Position or Scan Pill */}
-                  {openPos ? (
-                    <div className="mt-1 font-mono text-[9px] flex flex-col items-center gap-0.5">
-                      <span className={`font-bold px-1.5 py-0.2 rounded text-[8px] ${
-                        openPos.side === 'LONG' ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/40' : 'bg-rose-950 text-rose-400 border border-rose-500/40'
-                      }`}>
-                        {openPos.side} {openPos.leverage}x
-                      </span>
-                      <span className={`font-bold ${openPos.netPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {openPos.netPnl >= 0 ? '+' : ''}${openPos.netPnl.toFixed(2)}
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="mt-1 flex items-center justify-center gap-1 font-mono text-[9px] bg-slate-950/80 border border-slate-800/80 py-0.5 px-1.5 rounded">
-                      <span className="text-cyan-400/80 text-[8px] uppercase">SCAN 5M</span>
-                      <span className={`font-bold ${isPos ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {isPos ? '+' : ''}{avgChange.toFixed(1)}%
-                      </span>
-                    </div>
-                  )}
-                </motion.div>
-              );
-            })}
+                const openPos = agent.openPositions[0]; // First open position if running
+
+                const angleDeg = (index * 360 / displayAgents.length) - 90;
+                const angleRad = (angleDeg * Math.PI) / 180;
+                const cx = 270;
+                const cy = 270;
+                const radiusPx = 196;
+                const xEnd = cx + radiusPx * Math.cos(angleRad);
+                const yEnd = cy + radiusPx * Math.sin(angleRad);
+
+                const leftPct = ((xEnd / 540) * 100).toFixed(3);
+                const topPct = ((yEnd / 540) * 100).toFixed(3);
+
+                return (
+                  <div
+                    key={agent.catId}
+                    style={{
+                      position: 'absolute',
+                      left: `${leftPct}%`,
+                      top: `${topPct}%`,
+                      transform: 'translate(-50%, -50%)',
+                    }}
+                    className="z-20 pointer-events-auto"
+                  >
+                    <motion.div
+                      animate={{ 
+                        y: index % 2 === 0 ? [-1.5, 1.5, -1.5] : [1.5, -1.5, 1.5]
+                      }}
+                      transition={{ 
+                        y: { repeat: Infinity, duration: 3.5 + (index % 3) * 0.5, ease: 'easeInOut' }
+                      }}
+                      whileHover={{ scale: 1.08 }}
+                      whileTap={{ scale: 0.96 }}
+                      onClick={() => onNavigateTab('scanner')}
+                      className={`rounded-xl w-[88px] sm:w-[94px] py-1.5 px-1 sm:px-1.5 text-center cursor-pointer transition-all shadow-xl backdrop-blur-md group relative border ${
+                        agent.isOpen 
+                          ? 'bg-slate-900/95 border-emerald-400/90 shadow-[0_0_18px_rgba(52,211,153,0.35)] ring-1 ring-emerald-500/40' 
+                          : 'bg-slate-900/90 hover:bg-slate-900 border-cyan-500/40 hover:border-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.15)]'
+                      }`}
+                    >
+                      {/* Top scanner sweep shimmer bar across each bot card */}
+                      <div
+                        className={`absolute top-0 left-0 right-0 h-[2px] ${
+                          agent.isOpen
+                            ? 'bg-gradient-to-r from-emerald-500 via-cyan-400 to-emerald-500 animate-pulse'
+                            : 'bg-gradient-to-r from-transparent via-cyan-400 to-transparent'
+                        }`}
+                      />
+
+                      {/* Glowing Cybernetic Motion Icon Box */}
+                      <div className="w-6.5 h-6.5 mx-auto rounded-lg bg-slate-950/90 border border-cyan-500/50 flex items-center justify-center text-cyan-400 mb-1 shadow-md group-hover:border-cyan-300 group-hover:shadow-[0_0_10px_rgba(6,182,212,0.4)] transition-all">
+                        <BotMotionIcon catId={agent.catId} isOpen={agent.isOpen} size={16} />
+                      </div>
+
+                      {/* Bot Name / Symbol Display */}
+                      <h4 className="text-[8px] sm:text-[8.5px] font-bold text-slate-200 group-hover:text-cyan-300 transition-colors truncate font-sans tracking-tight">
+                        {openPos ? openPos.symbol : agent.name}
+                      </h4>
+
+                      {/* Running Position or Scan Pill */}
+                      {openPos ? (
+                        <div className="mt-0.5 font-mono text-[8px] flex flex-col items-center gap-0.5">
+                          <span className={`font-bold px-1 py-0.2 rounded text-[7.5px] ${
+                            openPos.side === 'LONG' ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/40' : 'bg-rose-950 text-rose-400 border border-rose-500/40'
+                          }`}>
+                            {openPos.side} {openPos.leverage}x
+                          </span>
+                          <span className={`font-bold text-[8.5px] ${openPos.netPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {openPos.netPnl >= 0 ? '+' : ''}${openPos.netPnl.toFixed(2)}
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="mt-0.5 flex items-center justify-center gap-1 font-mono text-[8px] bg-slate-950/80 border border-slate-800/80 py-0.5 px-1 rounded">
+                          <span className="text-cyan-400/80 text-[7px] uppercase">SCAN</span>
+                          <span className={`font-bold ${isPos ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {isPos ? '+' : ''}{avgChange.toFixed(1)}%
+                          </span>
+                        </div>
+                      )}
+                    </motion.div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {/* Swarm Footer Status Line with Motion Scan Line */}
@@ -440,11 +459,7 @@ export default function DashboardMain({
         {/* Right Column: Risk & Portfolio + Performance Summary (5 Cols) */}
         <div className="lg:col-span-5 space-y-5 flex flex-col justify-between">
           {/* Card 1: Risk & Portfolio */}
-          <motion.div 
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.4, delay: 0.1 }}
-            className="bg-slate-950/90 border border-slate-800/90 rounded-2xl p-5 shadow-xl space-y-4"
+          <div className="bg-slate-950/90 border border-slate-800/90 rounded-2xl p-5 shadow-xl space-y-4"
           >
             <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
               <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2 font-mono">
@@ -490,14 +505,10 @@ export default function DashboardMain({
                 <span className="font-bold text-emerald-400 text-sm">{totalOpenPositions} Active</span>
               </div>
             </div>
-          </motion.div>
+          </div>
 
           {/* Card 2: Performance Summary */}
-          <motion.div 
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.4, delay: 0.2 }}
-            className="bg-slate-950/90 border border-slate-800/90 rounded-2xl p-5 shadow-xl space-y-4 flex-1 flex flex-col justify-between"
+          <div className="bg-slate-950/90 border border-slate-800/90 rounded-2xl p-5 shadow-xl space-y-4 flex-1 flex flex-col justify-between"
           >
             <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
               <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2 font-mono">
@@ -553,7 +564,7 @@ export default function DashboardMain({
               <Compass className="w-4 h-4 text-amber-400" />
               <span>View Closed Positions / Full Analytics</span>
             </button>
-          </motion.div>
+          </div>
         </div>
       </div>
     </div>

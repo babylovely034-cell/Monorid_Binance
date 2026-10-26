@@ -15,9 +15,31 @@ export default function AssetInspectModal({
   asset,
   onClose,
 }: AssetInspectModalProps) {
+  const [candles, setCandles] = React.useState<any[]>(() => asset ? getCandlesForSymbol(asset.symbol) : []);
+  const [loadingKlines, setLoadingKlines] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!asset?.symbol) return;
+    let isMounted = true;
+    setLoadingKlines(true);
+
+    fetch(`/api/binance/klines?symbol=${asset.symbol}&interval=5m&limit=60`)
+      .then(res => res.json())
+      .then(data => {
+        if (isMounted && data.success && Array.isArray(data.klines) && data.klines.length >= 20) {
+          setCandles(data.klines);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (isMounted) setLoadingKlines(false);
+      });
+
+    return () => { isMounted = false; };
+  }, [asset?.symbol]);
+
   if (!asset) return null;
 
-  const candles = getCandlesForSymbol(asset.symbol);
   const pmaxData = calculatePMax(candles, 10, 3.0, 10);
   const proScalperData = calculateProScalperAI(candles);
 
@@ -26,7 +48,8 @@ export default function AssetInspectModal({
 
   const isLong = lastPMax?.dir === 1;
   const isOscAboveZero = lastScalper?.oscillator > 0;
-  const isConfirmed = (isLong && isOscAboveZero) || (!isLong && !isOscAboveZero);
+  const isConfirmed = (isLong && (lastScalper?.condStrongBuy || isOscAboveZero)) ||
+                      (!isLong && (lastScalper?.condStrongSell || !isOscAboveZero));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
@@ -60,13 +83,13 @@ export default function AssetInspectModal({
               <span className="text-sm font-bold text-white">${asset.currentPrice.toFixed(4)}</span>
             </div>
             <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
-              <span className="text-slate-500 block text-[10px]">PMAX STATUS</span>
+              <span className="text-slate-500 block text-[10px]">TREND STATUS</span>
               <span className={`text-sm font-bold ${isLong ? 'text-emerald-400' : 'text-rose-400'}`}>
                 {isLong ? 'BULLISH (LONG)' : 'BEARISH (SHORT)'}
               </span>
             </div>
             <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
-              <span className="text-slate-500 block text-[10px]">PRO SCALPER OSC</span>
+              <span className="text-slate-500 block text-[10px]">MOMENTUM OSC</span>
               <span className={`text-sm font-bold ${isOscAboveZero ? 'text-emerald-400' : 'text-rose-400'}`}>
                 {lastScalper.oscillator > 0 ? '+' : ''}{lastScalper.oscillator.toFixed(2)}
               </span>
@@ -82,17 +105,17 @@ export default function AssetInspectModal({
           {/* Strategy Confirmation Logic Checklist */}
           <div className="p-4 bg-slate-950/70 border border-slate-800 rounded-lg space-y-2.5">
             <span className="font-bold text-white block text-sm">
-              Execution Confirmation Criteria (Pine Script Rules)
+              Execution Confirmation Criteria (Dual-Engine Rules)
             </span>
             <div className="space-y-2 text-slate-300">
               <div className="flex items-center justify-between">
-                <span>1. Profit Maximizer (PMax) Direction:</span>
+                <span>1. Primary Trend Direction:</span>
                 <span className={`font-bold ${isLong ? 'text-emerald-400' : 'text-rose-400'}`}>
                   {isLong ? 'BUY Bias (MAvg > PMax)' : 'SELL Bias (MAvg < PMax)'}
                 </span>
               </div>
               <div className="flex items-center justify-between">
-                <span>2. Pro Scalper AI [BullByte] Zero Line:</span>
+                <span>2. Composite Momentum Zero Line:</span>
                 <span className={`font-bold ${isOscAboveZero ? 'text-emerald-400' : 'text-rose-400'}`}>
                   {isOscAboveZero ? 'Oscillator Above 0 (+ ' + lastScalper.oscillator.toFixed(1) + ')' : 'Oscillator Below 0 (' + lastScalper.oscillator.toFixed(1) + ')'}
                 </span>

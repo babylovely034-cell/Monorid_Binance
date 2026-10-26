@@ -1,33 +1,9 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useSyncExternalStore } from 'react';
-
-function getStartingBalanceSnapshot(): number {
-  if (typeof window === 'undefined') return 100.00;
-  try {
-    const savedStart = localStorage.getItem('monorid_fixed_starting_balance');
-    if (savedStart) {
-      const parsed = parseFloat(savedStart);
-      if (!isNaN(parsed) && parsed > 0) return parsed;
-    } else {
-      localStorage.setItem('monorid_fixed_starting_balance', '100.00');
-    }
-  } catch {
-    // Ignore localStorage errors
-  }
-  return 100.00;
-}
-
-function subscribeStartingBalance(callback: () => void) {
-  window.addEventListener('storage', callback);
-  return () => window.removeEventListener('storage', callback);
-}
-
-function getServerStartingBalanceSnapshot(): number {
-  return 100.00;
-}
+import React, { useState, useEffect, useRef } from 'react';
 import Navbar from '@/components/Navbar';
 import DashboardMain from '@/components/DashboardMain';
+import { MiroStyleLogo } from '@/components/MiroStyleLogo';
 import MarketScannerView from '@/components/MarketScannerView';
 import PositionsOrdersView from '@/components/PositionsOrdersView';
 import HistoryAnalyticsView from '@/components/HistoryAnalyticsView';
@@ -43,9 +19,17 @@ import {
   AssetScanningState,
   PnLDataPoint
 } from '@/lib/types';
-import { buildInitialCategoriesState, updateSymbolPrice, getCandlesForSymbol } from '@/lib/scannerData';
+import { 
+  buildInitialCategoriesState, 
+  updateSymbolPrice, 
+  getCandlesForSymbol, 
+  setCandlesForSymbol,
+  checkAssetQualification 
+} from '@/lib/scannerData';
 import { 
   evaluateMonoridSignal, 
+  calculatePMax,
+  calculateProScalperAI,
   calculateClosedTradePnL, 
   getRecentSwingLevels,
   calculateLiquidationPrice,
@@ -58,10 +42,11 @@ import { getBinanceWsClient, WsConnectionStatus, TickerUpdate } from '@/lib/bina
 const DEFAULT_SETTINGS: TradingSettings = {
   apiKey: '',
   apiSecret: '',
-  isLiveTrading: false,
-  startingBalance: 100.00, // Fixed initial balance, never changes
-  currentBalance: 100.00,
-  minimumReserveBuffer: 1.20, // $1.20 buffer requirement
+  isLiveTrading: true,
+  startingBalance: 0,
+  currentBalance: 0,
+  availableBalance: 0,
+  minimumReserveBuffer: 1.20, // $1.20 minimum reserve requirement
   balanceRiskPercent: 0.10, // 10% per trade
   defaultLeverage: 10,
   takerFeeRate: 0.0005, // 0.05% standard Binance USDT-M taker fee
@@ -75,178 +60,49 @@ const DEFAULT_SETTINGS: TradingSettings = {
   soundEnabled: true,
 };
 
-// Seed realistic initial historical performance to showcase analytics with fixed timestamps
-const SEED_CLOSED_TRADES: ClosedTrade[] = [
+const INITIAL_AUDIT_LOGS: LogEntry[] = [
   {
-    id: 'tr-seed-1',
-    symbol: 'SOLUSDT',
-    category: 'l1-mainstream',
-    side: 'LONG',
-    entryPrice: 168.40,
-    exitPrice: 176.80,
-    quantity: 5.938,
-    leverage: 10,
-    margin: 100,
-    entryTime: 1730000000000 - 3600000 * 4,
-    exitTime: 1730000000000 - 3600000 * 2,
-    grossPnl: 49.88,
-    entryFee: 0.50,
-    exitFee: 0.52,
-    totalFeesPaid: 1.02,
-    netPnl: 48.86,
-    netPnlPercent: 48.86,
-    exitReason: 'TAKE_PROFIT',
-    riskRewardAchieved: 2.0
+    id: 'log-prod-1',
+    timestamp: Date.now(),
+    type: 'SYSTEM',
+    severity: 'SUCCESS',
+    message: 'Monorid Autonomous Binance Futures Production Terminal active. Trading Lifestyle Quant quantitative engine initialized.'
   },
   {
-    id: 'tr-seed-2',
-    symbol: 'PEPEUSDT',
-    category: 'meme-coins',
-    side: 'LONG',
-    entryPrice: 0.0000095,
-    exitPrice: 0.00001045,
-    quantity: 105263157,
-    leverage: 10,
-    margin: 100,
-    entryTime: 1730000000000 - 3600000 * 7,
-    exitTime: 1730000000000 - 3600000 * 5,
-    grossPnl: 100.0,
-    entryFee: 0.50,
-    exitFee: 0.55,
-    totalFeesPaid: 1.05,
-    netPnl: 98.95,
-    netPnlPercent: 98.95,
-    exitReason: 'TAKE_PROFIT',
-    riskRewardAchieved: 2.0
-  },
-  {
-    id: 'tr-seed-3',
-    symbol: 'FETUSDT',
-    category: 'ai-big-data',
-    side: 'SHORT',
-    entryPrice: 1.55,
-    exitPrice: 1.58,
-    quantity: 645.16,
-    leverage: 10,
-    margin: 100,
-    entryTime: 1730000000000 - 3600000 * 10,
-    exitTime: 1730000000000 - 3600000 * 8,
-    grossPnl: -19.35,
-    entryFee: 0.50,
-    exitFee: 0.51,
-    totalFeesPaid: 1.01,
-    netPnl: -20.36,
-    netPnlPercent: -20.36,
-    exitReason: 'STOP_LOSS',
-    riskRewardAchieved: -1.0
-  },
-  {
-    id: 'tr-seed-4',
-    symbol: 'WIFUSDT',
-    category: 'meme-coins',
-    side: 'LONG',
-    entryPrice: 2.42,
-    exitPrice: 2.58,
-    quantity: 413.22,
-    leverage: 10,
-    margin: 100,
-    entryTime: 1730000000000 - 3600000 * 14,
-    exitTime: 1730000000000 - 3600000 * 11,
-    grossPnl: 66.11,
-    entryFee: 0.50,
-    exitFee: 0.53,
-    totalFeesPaid: 1.03,
-    netPnl: 65.08,
-    netPnlPercent: 65.08,
-    exitReason: 'TAKE_PROFIT',
-    riskRewardAchieved: 2.0
-  }
-];
-
-const SEED_BTC_POSITION: Position = {
-  id: 'pos-seed-btc',
-  symbol: 'BTCUSDT',
-  category: 'l1-mainstream',
-  side: 'LONG',
-  entryPrice: 68420.5,
-  currentPrice: 68540.5,
-  markPrice: 68540.5,
-  quantity: (10.0 * 15) / 68420.5,
-  leverage: 15,
-  signalStrength: 'BEST',
-  margin: 10.0,
-  entryTime: 1730020000000,
-  stopLoss: 67800.0,
-  takeProfit: 68420.5 + 2 * (68420.5 - 67800.0),
-  liquidationPrice: 64201.2358,
-  recentSwingPrice: 67800.0,
-  grossPnl: 0.26,
-  feesPaid: 0.075,
-  netPnl: 0.18,
-  netPnlPercent: 1.80,
-  status: 'OPEN'
-};
-
-const SEED_INITIAL_LOGS: LogEntry[] = [
-  {
-    id: 'log-init-1',
-    timestamp: 1730022000000,
+    id: 'log-prod-2',
+    timestamp: Date.now() - 1000,
     type: 'SCANNER',
     severity: 'INFO',
-    message: '10 Categories scanner active. 160 USDT-M pairs qualified and sorted by 24h maximum market change.'
+    message: '10 Categories scanner online. Monitoring 160 USDT-M pairs with Dual-Engine Quant (EMA 10, ATR 10, Mult 3.0) & Multi-Factor Momentum (ADX 14, Stoch RSI 12, OBV 50, HMA 21).'
   },
   {
-    id: 'log-init-2',
-    timestamp: 1730021990000,
-    type: 'SYSTEM',
+    id: 'log-prod-3',
+    timestamp: Date.now() - 2000,
+    type: 'EXECUTION',
     severity: 'INFO',
-    message: 'Fixed Starting Balance locked at $100.00 USDT (Benchmark for actual PnL).'
-  },
-  {
-    id: 'log-init-3',
-    timestamp: 1730021980000,
-    type: 'SYSTEM',
-    severity: 'INFO',
-    message: 'Monorid Binance Futures USDT-M Algo Trading Terminal active.'
+    message: 'Production Risk Parameters: $1.20 reserve safety check, 10% balance sizing, 10x-15x dynamic leverage, 1:2 RR TP, and liquidation shield active.'
   }
 ];
 
 export default function HomePage() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [categories, setCategories] = useState<CategorySummary[]>(buildInitialCategoriesState);
-  const [positions, setPositions] = useState<Position[]>([SEED_BTC_POSITION]);
-  const [closedTrades, setClosedTrades] = useState<ClosedTrade[]>(SEED_CLOSED_TRADES);
-  const [logs, setLogs] = useState<LogEntry[]>(SEED_INITIAL_LOGS);
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [closedTrades, setClosedTrades] = useState<ClosedTrade[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>(INITIAL_AUDIT_LOGS);
   const [settings, setSettings] = useState<TradingSettings>(DEFAULT_SETTINGS);
   const [userIp, setUserIp] = useState<string>('104.28.192.45');
   const [wsStatus, setWsStatus] = useState<WsConnectionStatus>('CONNECTING');
   const [inspectingAsset, setInspectingAsset] = useState<AssetScanningState | null>(null);
 
-  // Fixed Starting Balance: loaded safely with useSyncExternalStore
-  const startingBalance = useSyncExternalStore(
-    subscribeStartingBalance,
-    getStartingBalanceSnapshot,
-    getServerStartingBalanceSnapshot
-  );
-
-  // Cumulative Realized Net PnL after Binance fees
-  const totalRealizedNetPnl = closedTrades.reduce((sum, t) => sum + t.netPnl, 0);
-  const totalUnrealizedNetPnl = positions.reduce((sum, p) => sum + p.netPnl, 0);
-
-  // Current Balance = Starting Balance + Net Realized + Unrealized
-  const currentBalance = Math.max(0, startingBalance + totalRealizedNetPnl + totalUnrealizedNetPnl);
-
-  // Track PnL history benchmarked against fixed starting balance
-  const [pnlHistory] = useState<PnLDataPoint[]>([
-    { timestamp: 1730000000000, balance: 100.00, netPnl: 0, netPnlPercent: 0, label: 'Initial' },
-    { timestamp: 1730007200000, balance: 148.86, netPnl: 48.86, netPnlPercent: 48.86, label: 'SOL TP' },
-    { timestamp: 1730014400000, balance: 138.50, netPnl: 38.50, netPnlPercent: 38.50, label: 'FET SL' },
-    { timestamp: 1730021600000, balance: 193.78, netPnl: 93.78, netPnlPercent: 93.78, label: 'Current' }
-  ]);
+  const [liveStartingBalance, setLiveStartingBalance] = useState<number>(0);
+  const [liveCurrentBalance, setLiveCurrentBalance] = useState<number>(0);
+  const [liveAvailableBalance, setLiveAvailableBalance] = useState<number>(0);
+  const [pnlHistory, setPnlHistory] = useState<PnLDataPoint[]>([]);
 
   const positionsRef = useRef<Position[]>(positions);
   const settingsRef = useRef<TradingSettings>(settings);
-  const currentBalanceRef = useRef<number>(currentBalance);
+  const currentBalanceRef = useRef<number>(liveCurrentBalance);
   const handleTickerUpdateRef = useRef<(ticker: TickerUpdate) => void>(() => {});
 
   useEffect(() => {
@@ -258,8 +114,8 @@ export default function HomePage() {
   }, [settings]);
 
   useEffect(() => {
-    currentBalanceRef.current = currentBalance;
-  }, [currentBalance]);
+    currentBalanceRef.current = liveCurrentBalance;
+  }, [liveCurrentBalance]);
 
   // Add Log Entry Helper
   const addLog = (
@@ -278,12 +134,12 @@ export default function HomePage() {
       symbol,
       category
     };
-    setLogs(prev => [entry, ...prev.slice(0, 499)]); // keep up to 500 logs
+    setLogs(prev => [entry, ...prev.slice(0, 499)]); // keep up to 500 audit logs
   };
 
-  // 1. Initial Mount: Connect WebSocket and fetch client IP
+  // 1. Initial Load: Retrieve saved API credentials from localStorage and client IP
   useEffect(() => {
-    // Fetch user IPv4 for whitelist
+    // Detect Client IPv4 for Binance Whitelisting
     fetch('/api/ip')
       .then(res => res.json())
       .then(data => {
@@ -296,11 +152,287 @@ export default function HomePage() {
         setUserIp('104.28.192.45');
       });
 
-    // Connect WebSocket
+    // Load API Keys from localStorage
+    try {
+      const savedKey = localStorage.getItem('monorid_binance_api_key') || '';
+      const savedSecret = localStorage.getItem('monorid_binance_api_secret') || '';
+      if (savedKey && savedSecret) {
+        setSettings(prev => ({
+          ...prev,
+          apiKey: savedKey,
+          apiSecret: savedSecret
+        }));
+      }
+    } catch {
+      // Ignore localStorage read errors
+    }
+  }, []);
+
+  // 2. Fetch Live Binance Account Overview & Positions
+  const syncAccountData = async (apiKey: string, apiSecret: string) => {
+    if (!apiKey || !apiSecret) return;
+
+    try {
+      const res = await fetch('/api/binance/account', {
+        headers: {
+          'x-binance-api-key': apiKey,
+          'x-binance-api-secret': apiSecret
+        }
+      });
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        const wallet = data.walletBalance || 0;
+        const available = data.availableBalance || 0;
+
+        setLiveCurrentBalance(wallet);
+        setLiveAvailableBalance(available);
+
+        setLiveStartingBalance(prev => {
+          if (prev === 0 && wallet > 0) {
+            setPnlHistory([
+              {
+                timestamp: Date.now(),
+                balance: wallet,
+                netPnl: 0,
+                netPnlPercent: 0,
+                label: 'Benchmark'
+              }
+            ]);
+            return wallet;
+          }
+          return prev || wallet;
+        });
+
+        // Sync live open positions from Binance, preserving existing tracked order targets
+        if (Array.isArray(data.openPositions)) {
+          setPositions(prev => {
+            const prevMap = new Map(prev.map(p => [p.symbol, p]));
+            return data.openPositions.map((livePos: Position) => {
+              const existing = prevMap.get(livePos.symbol);
+              return {
+                ...livePos,
+                id: existing?.id || livePos.id,
+                stopLoss: livePos.stopLoss || existing?.stopLoss || 0,
+                takeProfit: livePos.takeProfit || existing?.takeProfit || 0,
+                leverage: livePos.leverage || existing?.leverage || 10,
+                signalStrength: existing?.signalStrength || livePos.signalStrength,
+                margin: livePos.margin || existing?.margin || 0,
+                feesPaid: existing?.feesPaid || 0,
+                category: existing?.category || livePos.category,
+                binanceOrderId: existing?.binanceOrderId || livePos.binanceOrderId,
+                stopLossOrderId: livePos.stopLossOrderId || existing?.stopLossOrderId,
+                takeProfitOrderId: livePos.takeProfitOrderId || existing?.takeProfitOrderId
+              };
+            });
+          });
+        }
+      }
+    } catch {
+      // Sync failed silently, will retry on next poll
+    }
+  };
+
+  // 3. Fetch Real Trade History from Binance
+  const syncTradeHistory = async (apiKey: string, apiSecret: string) => {
+    if (!apiKey || !apiSecret) return;
+
+    try {
+      const res = await fetch('/api/binance/history?limit=30', {
+        headers: {
+          'x-binance-api-key': apiKey,
+          'x-binance-api-secret': apiSecret
+        }
+      });
+      const data = await res.json();
+
+      if (res.ok && data.success && Array.isArray(data.trades)) {
+        const formatted: ClosedTrade[] = data.trades.map((t: any) => {
+          const qty = parseFloat(t.qty);
+          const price = parseFloat(t.price);
+          const commission = parseFloat(t.commission || '0');
+          const realizedPnl = parseFloat(t.realizedPnl || '0');
+          const isBuyer = t.buyer === true || t.side === 'BUY';
+          const margin = (qty * price) / 10;
+
+          return {
+            id: `trade-${t.id}`,
+            symbol: t.symbol,
+            category: 'live-binance',
+            side: isBuyer ? 'LONG' : 'SHORT',
+            entryPrice: price,
+            exitPrice: price,
+            quantity: qty,
+            leverage: 10,
+            margin: margin || 10,
+            entryTime: t.time - 60000,
+            exitTime: t.time,
+            grossPnl: realizedPnl + commission,
+            entryFee: commission / 2,
+            exitFee: commission / 2,
+            totalFeesPaid: commission,
+            netPnl: realizedPnl,
+            netPnlPercent: margin > 0 ? (realizedPnl / margin) * 100 : 0,
+            exitReason: realizedPnl >= 0 ? 'TAKE_PROFIT' : 'STOP_LOSS',
+            riskRewardAchieved: realizedPnl >= 0 ? 2.0 : -1.0
+          };
+        });
+
+        if (formatted.length > 0) {
+          setClosedTrades(formatted);
+        }
+      }
+    } catch {
+      // History sync error
+    }
+  };
+
+  // 4. Fetch Real 24hr Tickers across all symbols
+  const syncRealTickers = async () => {
+    try {
+      const res = await fetch('/api/binance/tickers');
+      const data = await res.json();
+
+      if (res.ok && data.success && Array.isArray(data.tickers)) {
+        const tickerMap = new Map<string, any>();
+        for (const t of data.tickers) {
+          tickerMap.set(t.symbol, t);
+        }
+
+        setCategories(prevCats => {
+          return prevCats.map(cat => {
+            const updatedAssets = cat.assets.map(asset => {
+              const live = tickerMap.get(asset.symbol);
+              if (live) {
+                const price = parseFloat(live.lastPrice);
+                const change = parseFloat(live.priceChangePercent);
+                const volume = parseFloat(live.quoteVolume);
+                const high = parseFloat(live.highPrice);
+                const low = parseFloat(live.lowPrice);
+                const qual = checkAssetQualification({ volume24h: volume, change24h: change, price });
+
+                return {
+                  ...asset,
+                  currentPrice: price || asset.currentPrice,
+                  change24h: change || asset.change24h,
+                  volume24h: volume || asset.volume24h,
+                  high24h: high || asset.high24h,
+                  low24h: low || asset.low24h,
+                  isQualified: qual.isQualified,
+                  disqualificationReason: qual.reason
+                };
+              }
+              return asset;
+            });
+
+            // Sort 16 assets by absolute 24h change descending
+            updatedAssets.sort((a, b) => Math.abs(b.change24h) - Math.abs(a.change24h));
+            const avgChange = updatedAssets.reduce((s, a) => s + a.change24h, 0) / (updatedAssets.length || 1);
+            const maxChange = Math.max(...updatedAssets.map(a => Math.abs(a.change24h)));
+
+            return {
+              ...cat,
+              assets: updatedAssets,
+              avgChange24h: avgChange,
+              maxChange24h: maxChange
+            };
+          });
+        });
+      }
+    } catch {
+      // Tickers sync error
+    }
+  };
+
+  // 5. Fetch real 5m Binance candles for top category movers to calculate live indicators
+  const syncTopMoversKlines = async () => {
+    try {
+      const symbolsToFetch = Array.from(new Set(categories.map(c => c.assets[0]?.symbol).filter(Boolean)));
+      for (const sym of symbolsToFetch) {
+        try {
+          const res = await fetch(`/api/binance/klines?symbol=${sym}&interval=5m&limit=60`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.success && Array.isArray(data.klines) && data.klines.length >= 20) {
+              setCandlesForSymbol(sym, data.klines);
+            }
+          }
+        } catch {}
+      }
+
+      setCategories(prevCats => {
+        return prevCats.map(cat => {
+          const nextAssets = cat.assets.map(asset => {
+            const candles = getCandlesForSymbol(asset.symbol);
+            if (candles.length >= 20) {
+              const pmax = calculatePMax(candles, 10, 3.0, 10);
+              const scalper = calculateProScalperAI(candles);
+              const lastPMax = pmax[pmax.length - 1];
+              const lastScalper = scalper[scalper.length - 1];
+              const swings = getRecentSwingLevels(candles, 5);
+
+              let signalStatus: AssetScanningState['signalStatus'] = 'NEUTRAL';
+              if (lastPMax.dir === 1) {
+                signalStatus = (lastScalper.condStrongBuy || lastScalper.isAboveZero) ? 'CONFIRMED_BUY' : 'READY_BUY';
+              } else {
+                signalStatus = (lastScalper.condStrongSell || lastScalper.isBelowZero) ? 'CONFIRMED_SELL' : 'READY_SELL';
+              }
+
+              const pmaxSignalVal: 'BUY' | 'SELL' | 'HOLD' = lastPMax.buySignal ? 'BUY' : lastPMax.sellSignal ? 'SELL' : 'HOLD';
+
+              return {
+                ...asset,
+                pmaxDir: lastPMax.dir,
+                pmaxMAvg: lastPMax.mAvg,
+                pmaxLine: lastPMax.pMax,
+                pmaxSignal: pmaxSignalVal,
+                proScalperOsc: lastScalper.oscillator,
+                proScalperConfirmed: (lastPMax.dir === 1 && (lastScalper.condStrongBuy || lastScalper.isAboveZero)) ||
+                                     (lastPMax.dir === -1 && (lastScalper.condStrongSell || lastScalper.isBelowZero)),
+                signalStatus,
+                swingLow: swings.swingLow,
+                swingHigh: swings.swingHigh
+              };
+            }
+            return asset;
+          });
+          return { ...cat, assets: nextAssets };
+        });
+      });
+    } catch {}
+  };
+
+  // Initial & Periodic Data Polling
+  useEffect(() => {
+    syncRealTickers();
+    syncTopMoversKlines();
+    const tickerInterval = setInterval(syncRealTickers, 20000);
+    const klinesInterval = setInterval(syncTopMoversKlines, 30000);
+    return () => {
+      clearInterval(tickerInterval);
+      clearInterval(klinesInterval);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (settings.apiKey && settings.apiSecret) {
+      syncAccountData(settings.apiKey, settings.apiSecret);
+      syncTradeHistory(settings.apiKey, settings.apiSecret);
+
+      const accInterval = setInterval(() => {
+        syncAccountData(settings.apiKey, settings.apiSecret);
+        syncTradeHistory(settings.apiKey, settings.apiSecret);
+      }, 10000);
+
+      return () => clearInterval(accInterval);
+    }
+  }, [settings.apiKey, settings.apiSecret]);
+
+  // 5. Connect Real Live Binance WebSocket Feed
+  useEffect(() => {
     const wsClient = getBinanceWsClient();
     const unsubStatus = wsClient.onStatusChange(status => setWsStatus(status));
-    
-    // Subscribe to ticker updates via ref
+
     const unsubTicker = wsClient.subscribe((ticker: TickerUpdate) => {
       handleTickerUpdateRef.current(ticker);
     });
@@ -314,113 +446,39 @@ export default function HomePage() {
     };
   }, []);
 
-  // 2. Handle Live Ticker Updates from WebSocket
+  // 6. Handle Live WebSocket Ticker Updates
   const handleLiveTickerUpdate = (ticker: TickerUpdate) => {
-    // A. Update Position PnL; ENFORCE: Positions closed strictly and ONLY on Take Profit or Stop Loss!
-    setPositions(prevPositions => {
-      const updated = prevPositions.map(pos => {
-        if (pos.symbol !== ticker.symbol) return pos;
-
-        const currentPrice = ticker.price;
-        const pnlCalc = calculateClosedTradePnL(
-          pos.side,
-          pos.entryPrice,
-          currentPrice,
-          pos.quantity,
-          pos.leverage,
-          settingsRef.current.takerFeeRate
-        );
-
-        return {
-          ...pos,
-          currentPrice,
-          markPrice: currentPrice,
-          grossPnl: pnlCalc.grossPnl,
-          feesPaid: pnlCalc.entryFee,
-          netPnl: pnlCalc.netPnl,
-          netPnlPercent: pnlCalc.netPnlPercent
-        };
-      });
-
-      // Strict Exit Enforcement: Closed ONLY on TP or SL
-      const remaining: Position[] = [];
-      for (const pos of updated) {
-        let isClosed = false;
-        let exitReason: ClosedTrade['exitReason'] = 'STOP_LOSS';
-
-        if (pos.side === 'LONG') {
-          if (pos.currentPrice <= pos.stopLoss) {
-            isClosed = true;
-            exitReason = 'STOP_LOSS';
-          } else if (pos.currentPrice >= pos.takeProfit) {
-            isClosed = true;
-            exitReason = 'TAKE_PROFIT';
-          }
-        } else {
-          if (pos.currentPrice >= pos.stopLoss) {
-            isClosed = true;
-            exitReason = 'STOP_LOSS';
-          } else if (pos.currentPrice <= pos.takeProfit) {
-            isClosed = true;
-            exitReason = 'TAKE_PROFIT';
-          }
-        }
-
-        if (isClosed) {
-          // Finalize Closed Trade after Binance Platform Fees!
-          const closedResult = calculateClosedTradePnL(
+    // Update live open positions with mark price
+    setPositions(prev => {
+      let changed = false;
+      const updated = prev.map(pos => {
+        if (pos.symbol === ticker.symbol) {
+          changed = true;
+          const currentPrice = ticker.price;
+          const pnlCalc = calculateClosedTradePnL(
             pos.side,
             pos.entryPrice,
-            pos.currentPrice,
+            currentPrice,
             pos.quantity,
             pos.leverage,
             settingsRef.current.takerFeeRate
           );
 
-          const trade: ClosedTrade = {
-            id: `trade-${Date.now()}`,
-            symbol: pos.symbol,
-            category: pos.category,
-            side: pos.side,
-            entryPrice: pos.entryPrice,
-            exitPrice: pos.currentPrice,
-            quantity: pos.quantity,
-            leverage: pos.leverage,
-            signalStrength: pos.signalStrength,
-            margin: pos.margin,
-            entryTime: pos.entryTime,
-            exitTime: Date.now(),
-            grossPnl: closedResult.grossPnl,
-            entryFee: closedResult.entryFee,
-            exitFee: closedResult.exitFee,
-            totalFeesPaid: closedResult.totalFeesPaid,
-            netPnl: closedResult.netPnl,
-            netPnlPercent: closedResult.netPnlPercent,
-            exitReason,
-            riskRewardAchieved: exitReason === 'TAKE_PROFIT' ? 2.0 : -1.0,
-            liquidationPrice: pos.liquidationPrice
+          return {
+            ...pos,
+            currentPrice,
+            markPrice: currentPrice,
+            grossPnl: pnlCalc.grossPnl,
+            netPnl: pnlCalc.netPnl,
+            netPnlPercent: pnlCalc.netPnlPercent
           };
-
-          setClosedTrades(prev => [trade, ...prev]);
-
-          addLog(
-            'TP_SL',
-            exitReason === 'TAKE_PROFIT' ? 'SUCCESS' : 'WARNING',
-            `CLOSED ${pos.symbol} ${pos.side} (${pos.leverage}x ${pos.signalStrength}) strictly via ${
-              exitReason === 'TAKE_PROFIT' ? '1:2 RR TP Target' : 'Swing SL'
-            } @ $${pos.currentPrice.toFixed(4)}. Gross: $${closedResult.grossPnl.toFixed(2)}, Platform Fees Paid: -$${closedResult.totalFeesPaid.toFixed(2)}, Net Realized PnL: ${closedResult.netPnl >= 0 ? '+' : ''}$${closedResult.netPnl.toFixed(2)} (${closedResult.netPnlPercent.toFixed(2)}%)`,
-            pos.symbol,
-            pos.category
-          );
-        } else {
-          remaining.push(pos);
         }
-      }
-
-      return remaining;
+        return pos;
+      });
+      return changed ? updated : prev;
     });
 
-    // B. Update Category Asset Prices
+    // Update scanner assets
     setCategories(prevCats => {
       let changed = false;
       const nextCats = prevCats.map(cat => {
@@ -459,8 +517,8 @@ export default function HomePage() {
     handleTickerUpdateRef.current = handleLiveTickerUpdate;
   });
 
-  // 3. Execute Trade with Balance 10%, 10x-15x Leverage, $1.20 Buffer, and Liquidation Protection
-  const executeTrade = (symbol: string, category: string, side: 'LONG' | 'SHORT') => {
+  // 7. Real Trade Execution on Binance USDT-M Futures
+  const executeTrade = async (symbol: string, category: string, side: 'LONG' | 'SHORT') => {
     const curBalance = currentBalanceRef.current;
 
     // Requirement: "Keep 1.20$ balance in my account if our balance below 1.20$ no trade executed. Waiting for balance available"
@@ -487,44 +545,56 @@ export default function HomePage() {
       return;
     }
 
-    // Check if already open
     if (positions.some(p => p.symbol === symbol)) {
-      addLog(
-        'EXECUTION',
-        'INFO',
-        `Position already open for ${symbol}. Skipping duplicate entry.`,
-        symbol,
-        category
-      );
       return;
     }
 
-    const candles = getCandlesForSymbol(symbol);
+    // Fetch latest real 5m candles from Binance to guarantee live indicator accuracy
+    let candles = getCandlesForSymbol(symbol);
+    try {
+      const klinesRes = await fetch(`/api/binance/klines?symbol=${symbol}&interval=5m&limit=60`);
+      if (klinesRes.ok) {
+        const klinesData = await klinesRes.json();
+        if (klinesData.success && Array.isArray(klinesData.klines) && klinesData.klines.length >= 20) {
+          setCandlesForSymbol(symbol, klinesData.klines);
+          candles = klinesData.klines;
+        }
+      }
+    } catch {}
+
     const signal = evaluateMonoridSignal(symbol, candles, 10, 3.0, settings.swingLookbackBars);
+
+    // Requirement: "Both indicators must agree: PMax triggers the primary signal direction, and Pro Scalper AI provides the confirmed filter/confirmation before opening real Binance USDT-M Futures orders."
+    if (side === 'LONG' && signal.finalDecision !== 'EXECUTE_LONG') {
+      addLog('EXECUTION', 'INFO', `Signal rejected for ${symbol}: ${signal.reason}`, symbol, category);
+      return;
+    }
+    if (side === 'SHORT' && signal.finalDecision !== 'EXECUTE_SHORT') {
+      addLog('EXECUTION', 'INFO', `Signal rejected for ${symbol}: ${signal.reason}`, symbol, category);
+      return;
+    }
 
     const isBuyExpected = side === 'LONG';
     const currentPrice = candles[candles.length - 1].close;
     const swings = getRecentSwingLevels(candles, settings.swingLookbackBars);
 
     // Requirement: "Best signal use 15x or good signal use 10x leverage."
-    const signalEval = evaluateSignalStrength(side, signal.proScalperOsc);
-    const leverage = signalEval.leverage; // 15x for BEST, 10x for GOOD
+    const signalEval = evaluateSignalStrength(side, signal.proScalperOsc, 25, signal.isStrong);
+    const leverage = signalEval.leverage;
     const signalStrength = signalEval.strength;
 
     let stopLoss = 0;
     let takeProfit = 0;
 
     if (isBuyExpected) {
-      // Swing Low for Long SL
       stopLoss = Math.min(swings.swingLow, currentPrice * 0.992);
       const risk = currentPrice - stopLoss;
-      // 1:2 RR TP
+      // 1:2 Risk to Reward Take Profit
       takeProfit = currentPrice + 2 * risk;
     } else {
-      // Swing High for Short SL
       stopLoss = Math.max(swings.swingHigh, currentPrice * 1.008);
       const risk = stopLoss - currentPrice;
-      // 1:2 RR TP
+      // 1:2 Risk to Reward Take Profit
       takeProfit = currentPrice - 2 * risk;
     }
 
@@ -543,50 +613,140 @@ export default function HomePage() {
       return;
     }
 
-    // 10% of Balance sizing
     const margin = marginAllocation.margin;
-    const notional = margin * leverage;
-    const quantity = notional / currentPrice;
-    const entryFee = notional * settings.takerFeeRate;
 
-    const newPosition: Position = {
-      id: `pos-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      symbol,
-      category,
-      side,
-      entryPrice: currentPrice,
-      currentPrice,
-      markPrice: currentPrice,
-      quantity,
-      leverage,
-      signalStrength,
-      margin,
-      entryTime: Date.now(),
-      stopLoss,
-      takeProfit,
-      liquidationPrice,
-      recentSwingPrice: isBuyExpected ? swings.swingLow : swings.swingHigh,
-      grossPnl: 0,
-      feesPaid: entryFee,
-      netPnl: -entryFee,
-      netPnlPercent: (-entryFee / margin) * 100,
-      status: 'OPEN'
-    };
+    // Check if Binance API credentials are configured for real order submission
+    if (!settings.apiKey || !settings.apiSecret) {
+      addLog(
+        'EXECUTION',
+        'WARNING',
+        `[BINANCE API REQUIRED] Confirmed ${side} signal on ${symbol} ready for execution, but Binance Futures API Key is missing. Configure API keys in Settings to execute real trades.`,
+        symbol,
+        category
+      );
+      return;
+    }
 
-    setPositions(prev => [newPosition, ...prev]);
+    // Execute Real Order via Signed Binance Futures API Route
+    try {
+      addLog(
+        'EXECUTION',
+        'INFO',
+        `Submitting real ${side} order to Binance Futures for ${symbol} with ${leverage}x leverage and $${margin.toFixed(2)} margin...`,
+        symbol,
+        category
+      );
 
-    addLog(
-      'EXECUTION',
-      'SUCCESS',
-      `EXECUTED ${side} on ${symbol} @ $${currentPrice.toFixed(4)}. Signal: ${signalStrength} (${leverage}x Lev). Margin: $${margin.toFixed(2)} (10% balance). SL: $${stopLoss.toFixed(4)} (Swing ${isBuyExpected ? 'Low' : 'High'}), Liq: $${liquidationPrice.toFixed(4)} (Protected), TP: $${takeProfit.toFixed(4)} (1:2 RR). Binance Entry Fee: -$${entryFee.toFixed(3)}`,
-      symbol,
-      category
-    );
+      const orderRes = await fetch('/api/binance/order', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-binance-api-key': settings.apiKey,
+          'x-binance-api-secret': settings.apiSecret
+        },
+        body: JSON.stringify({
+          symbol,
+          side,
+          margin,
+          leverage,
+          stopLoss,
+          takeProfit
+        })
+      });
+
+      const orderData = await orderRes.json();
+
+      if (!orderRes.ok || !orderData.success) {
+        throw new Error(orderData.message || 'Binance order submission rejected');
+      }
+
+      const trade = orderData.trade;
+      const executedPrice = trade.executedPrice || currentPrice;
+      const quantity = trade.quantity;
+
+      const newPosition: Position = {
+        id: `pos-${trade.entryOrderId || Date.now()}`,
+        symbol,
+        category,
+        side,
+        entryPrice: executedPrice,
+        currentPrice: executedPrice,
+        markPrice: executedPrice,
+        quantity,
+        leverage,
+        signalStrength,
+        margin,
+        entryTime: Date.now(),
+        stopLoss: trade.stopLoss || stopLoss,
+        takeProfit: trade.takeProfit || takeProfit,
+        liquidationPrice,
+        recentSwingPrice: isBuyExpected ? swings.swingLow : swings.swingHigh,
+        grossPnl: 0,
+        feesPaid: margin * leverage * settings.takerFeeRate,
+        netPnl: -(margin * leverage * settings.takerFeeRate),
+        netPnlPercent: -settings.takerFeeRate * leverage * 100,
+        status: 'OPEN',
+        binanceOrderId: trade.entryOrderId,
+        stopLossOrderId: trade.stopLossOrderId,
+        takeProfitOrderId: trade.takeProfitOrderId
+      };
+
+      setPositions(prev => [newPosition, ...prev.filter(p => p.symbol !== symbol)]);
+
+      addLog(
+        'EXECUTION',
+        'SUCCESS',
+        `[BINANCE LIVE FILLS] Real ${side} order executed for ${symbol} @ $${executedPrice.toFixed(4)}. Order ID: ${trade.entryOrderId}. Leverage: ${leverage}x (${signalStrength}). Margin: $${margin.toFixed(2)}. SL: $${trade.stopLoss} (Swing ${isBuyExpected ? 'Low' : 'High'}), Liq: $${liquidationPrice.toFixed(4)} (Shield Active), TP: $${trade.takeProfit} (1:2 RR).`,
+        symbol,
+        category
+      );
+
+      // Re-sync wallet balance after order fill
+      syncAccountData(settings.apiKey, settings.apiSecret);
+    } catch (err: any) {
+      addLog(
+        'EXECUTION',
+        'ERROR',
+        `Real trade execution failed on Binance for ${symbol}: ${err?.message || err}`,
+        symbol,
+        category
+      );
+    }
   };
 
-  // 4. Autonomous Bot Execution Engine
-  // Continuously monitors confirmed signals across all 10 categories (160 pairs)
-  // Automatically opens trades with 10% margin, 10x-15x leverage, checking liquidation shield & $1.20 buffer.
+  // 8. Emergency Market Close
+  const handleEmergencyClose = async (symbol: string) => {
+    if (!settings.apiKey || !settings.apiSecret) {
+      setPositions(prev => prev.filter(p => p.symbol !== symbol));
+      return;
+    }
+
+    try {
+      addLog('EXECUTION', 'INFO', `Closing position for ${symbol} on Binance Futures...`, symbol);
+      const res = await fetch('/api/binance/close', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-binance-api-key': settings.apiKey,
+          'x-binance-api-secret': settings.apiSecret
+        },
+        body: JSON.stringify({ symbol })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setPositions(prev => prev.filter(p => p.symbol !== symbol));
+        addLog('EXECUTION', 'SUCCESS', `Successfully closed ${symbol} position on Binance Futures.`, symbol);
+        syncAccountData(settings.apiKey, settings.apiSecret);
+        syncTradeHistory(settings.apiKey, settings.apiSecret);
+      } else {
+        throw new Error(data.message || 'Close failed');
+      }
+    } catch (err: any) {
+      addLog('EXECUTION', 'ERROR', `Failed to close ${symbol}: ${err?.message || err}`, symbol);
+    }
+  };
+
+  // 9. Autonomous Bot Strategy Loop
   const executeTradeRef = useRef(executeTrade);
   useEffect(() => {
     executeTradeRef.current = executeTrade;
@@ -612,14 +772,14 @@ export default function HomePage() {
           }
         }
       }
-    }, 12000);
+    }, 10000);
 
     return () => clearInterval(interval);
   }, [categories, settings.autoTradingEnabled]);
 
-  // Actual profit and loss based on FIXED starting balance
-  const actualProfitDollar = currentBalance - startingBalance;
-  const actualProfitPercent = startingBalance > 0 ? (actualProfitDollar / startingBalance) * 100 : 0;
+  // Actual Realized & Unrealized PnL based on live balance benchmark
+  const actualProfitDollar = liveStartingBalance > 0 ? liveCurrentBalance - liveStartingBalance : 0;
+  const actualProfitPercent = liveStartingBalance > 0 ? (actualProfitDollar / liveStartingBalance) * 100 : 0;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950">
@@ -629,8 +789,8 @@ export default function HomePage() {
         setActiveTab={setActiveTab}
         wsStatus={wsStatus}
         userIp={userIp}
-        startingBalance={startingBalance}
-        currentBalance={currentBalance}
+        startingBalance={liveStartingBalance}
+        currentBalance={liveCurrentBalance}
         totalNetPnl={actualProfitDollar}
         totalNetPnlPercent={actualProfitPercent}
         openPositionsCount={positions.length}
@@ -649,8 +809,8 @@ export default function HomePage() {
             categories={categories}
             positions={positions}
             settings={settings}
-            startingBalance={startingBalance}
-            currentBalance={currentBalance}
+            startingBalance={liveStartingBalance}
+            currentBalance={liveCurrentBalance}
             pnlDataPoints={pnlHistory}
             onNavigateTab={setActiveTab}
           />
@@ -667,6 +827,7 @@ export default function HomePage() {
         {activeTab === 'positions' && (
           <PositionsOrdersView
             positions={positions}
+            onClosePosition={handleEmergencyClose}
           />
         )}
 
@@ -685,21 +846,41 @@ export default function HomePage() {
 
         {activeTab === 'settings' && (
           <SettingsView
-            settings={{ ...settings, startingBalance, currentBalance }}
+            settings={{
+              ...settings,
+              startingBalance: liveStartingBalance,
+              currentBalance: liveCurrentBalance,
+              availableBalance: liveAvailableBalance
+            }}
             userIp={userIp}
             onSaveSettings={(newSettings) => {
               setSettings(prev => ({
                 ...prev,
                 apiKey: newSettings.apiKey,
                 apiSecret: newSettings.apiSecret,
-                isLiveTrading: newSettings.isLiveTrading,
+                isLiveTrading: true,
               }));
-              addLog('SYSTEM', 'SUCCESS', 'Binance Futures API credentials saved securely. Strategy parameters remain locked & autonomous.');
+
+              try {
+                localStorage.setItem('monorid_binance_api_key', newSettings.apiKey);
+                localStorage.setItem('monorid_binance_api_secret', newSettings.apiSecret);
+              } catch {}
+
+              addLog('SYSTEM', 'SUCCESS', 'Binance Futures API credentials saved securely. Testing live connection and fetching balances...');
+              syncAccountData(newSettings.apiKey, newSettings.apiSecret);
+              syncTradeHistory(newSettings.apiKey, newSettings.apiSecret);
             }}
             onTestApiConnection={async () => {
-              addLog('WEBSOCKET', 'INFO', 'Testing Binance USDT-M Futures endpoint connectivity...');
-              await new Promise(r => setTimeout(r, 1000));
-              return true;
+              const res = await fetch('/api/binance/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  apiKey: settings.apiKey,
+                  apiSecret: settings.apiSecret
+                })
+              });
+              const data = await res.json();
+              return data.success === true;
             }}
           />
         )}
@@ -708,10 +889,8 @@ export default function HomePage() {
       {/* Footer */}
       <footer className="border-t border-slate-900 bg-slate-950/80 py-4 font-mono text-xs text-slate-400">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <div className="w-5 h-5 rounded bg-gradient-to-br from-cyan-400 to-blue-600 flex items-center justify-center text-slate-950 font-black text-xs shadow-sm">
-              M
-            </div>
+          <div className="flex items-center gap-2.5">
+            <MiroStyleLogo size="xs" animated={true} />
             <span className="font-bold text-slate-200">
               Monorid <span className="text-slate-500 font-normal">•</span> Autonomous Binance Futures High-Frequency System
             </span>

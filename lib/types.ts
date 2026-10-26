@@ -39,6 +39,10 @@ export interface ProScalperResult {
   upperThreshold: number;
   lowerThreshold: number;
   trendHMA: number;
+  hmaValue: number;
+  condStrongBuy: boolean;
+  condStrongSell: boolean;
+  latchedState?: 1 | -1 | 0;
   isAboveZero: boolean;
   isBelowZero: boolean;
   signalState: 'Strong Buy' | 'Strong Sell' | 'Early Buy' | 'Early Sell' | 'No Signal';
@@ -50,6 +54,8 @@ export interface CombinedSignal {
   pmaxSignal: 'BUY' | 'SELL' | 'NONE';
   proScalperOsc: number;
   proScalperConfirmed: boolean;
+  isStrong?: boolean;
+  isCrossover?: boolean;
   finalDecision: 'EXECUTE_LONG' | 'EXECUTE_SHORT' | 'NO_TRADE';
   reason: string;
   price: number;
@@ -82,6 +88,10 @@ export interface Position {
   netPnl: number;
   netPnlPercent: number;
   status: 'OPEN' | 'CLOSING';
+  binanceOrderId?: number | string;
+  clientOrderId?: string;
+  stopLossOrderId?: number | string;
+  takeProfitOrderId?: number | string;
 }
 
 export interface ClosedTrade {
@@ -164,8 +174,9 @@ export interface TradingSettings {
   apiKey: string;
   apiSecret: string;
   isLiveTrading: boolean;
-  startingBalance: number; // Fixed initial balance, never changes
+  startingBalance: number; // Initial balance benchmark
   currentBalance: number;
+  availableBalance?: number;
   minimumReserveBuffer: number; // Locked at $1.20
   balanceRiskPercent: number; // 10% per trade
   defaultLeverage: number; // 10x or 15x dynamic

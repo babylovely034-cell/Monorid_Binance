@@ -16,10 +16,12 @@ import {
 
 interface PositionsOrdersViewProps {
   positions: Position[];
+  onClosePosition?: (symbol: string) => void;
 }
 
 export default function PositionsOrdersView({
   positions,
+  onClosePosition,
 }: PositionsOrdersViewProps) {
   const totalNetPnl = positions.reduce((sum, p) => sum + p.netPnl, 0);
   const totalGrossPnl = positions.reduce((sum, p) => sum + p.grossPnl, 0);
@@ -87,7 +89,7 @@ export default function PositionsOrdersView({
             <Crosshair className="w-10 h-10 text-slate-600 mx-auto" />
             <h4 className="text-sm font-bold text-slate-300">No Active Positions</h4>
             <p className="text-xs text-slate-500 max-w-sm mx-auto">
-              The automated bot is scanning 10 categories for confirmed PMax + Pro Scalper AI signals on the 5m timeframe.
+              The automated bot is scanning 10 categories for confirmed dual-engine signals on the 5m timeframe.
             </p>
           </div>
         ) : (
@@ -193,13 +195,19 @@ export default function PositionsOrdersView({
 
                       {/* Action / Exit Mode */}
                       <td className="py-3 px-4 text-right">
-                        <div className="flex flex-col items-end gap-1">
+                        <div className="flex flex-col items-end gap-1.5">
                           <span className="text-[10px] text-emerald-400 font-bold bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/30">
                             AUTO TP (1:2) / SL
                           </span>
-                          <span className="text-[10px] text-slate-500 font-mono">
-                            Automated Exit Only
-                          </span>
+                          {onClosePosition && (
+                            <button
+                              type="button"
+                              onClick={() => onClosePosition(pos.symbol)}
+                              className="text-[10px] text-rose-400 hover:text-white bg-rose-950/60 hover:bg-rose-900 border border-rose-800/80 px-2 py-0.5 rounded font-mono transition-colors cursor-pointer"
+                            >
+                              Market Close
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
