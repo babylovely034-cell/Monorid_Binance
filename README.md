@@ -242,7 +242,7 @@ Verify mathematical calculations, risk formulas, fee models, and signal logic:
 ```bash
 npm test
 ```
-*Output: 17/17 tests passing with zero failures.*
+*Output: 18/18 tests passing with zero failures.*
 
 ### Production Build & Launch
 Compile optimized production bundles:
@@ -278,6 +278,7 @@ Deploy Monorid directly to **Aiven Runtime** with zero configuration conflicts:
 ## 9. Verification & Performance Checklist
 
 - [x] **Zero Paper/Simulation Mock Data**: 100% connected to live Binance Futures endpoints.
+- [x] **Autonomous Running Trade Shield**: Automatically detects active running trades without TP/SL and attaches protective 1:2 RR Take Profit and Stop Loss with liquidation collision avoidance.
 - [x] **Hedge & One-Way Mode Compatibility**: Automatically queries and adapts to user account position mode.
 - [x] **Strict Mathematical Agreement**: Signal is rejected unless both the trend engine and confirmation oscillator confirm the direction.
 - [x] **Dynamic Swing Levels**: Stop loss and Take Profit orders dynamically adapt to local market structure.
