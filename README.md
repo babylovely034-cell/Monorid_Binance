@@ -253,7 +253,26 @@ npm start
 
 ---
 
-## 8. Verification & Performance Checklist
+## 8. Aiven Runtime Cloud Deployment
+
+Deploy Monorid directly to **Aiven Runtime** with zero configuration conflicts:
+
+1. **Connect GitHub Repository**: In the Aiven Console project, navigate to **Runtime** > **Deploy application** and select your connected GitHub repository and branch.
+2. **Select Manifest**: On the **Deploy from GitHub — Select manifest** screen:
+   - Recommended: Select **`compose.aiven.yaml`** (canonical Aiven Compose manifest).
+   - Alternatively: You can also select **`compose.yaml`** or **`Dockerfile`**. All three manifests are strictly deduplicated and validated against Aiven's schema.
+3. **Configure Environment Variables**:
+   In the Aiven Console environment variables editor, configure:
+   - `BINANCE_API_KEY`: Your Binance USDT-M API Key (toggle **Secret** on).
+   - `BINANCE_API_SECRET`: Your Binance USDT-M API Secret (toggle **Secret** on).
+   - `GEMINI_API_KEY`: *(Optional)* Gemini AI key for quantitative swarm intelligence.
+   - `PORT`: `3000` (auto-mapped to Aiven's public HTTPS 443 reverse proxy).
+   - `NODE_ENV`: `production`.
+4. **Deploy Application**: Click **Deploy**. Aiven Runtime builds the optimized Next.js standalone production image, starts the container on `0.0.0.0:3000`, and provisions the public HTTPS endpoint.
+
+---
+
+## 9. Verification & Performance Checklist
 
 - [x] **Zero Paper/Simulation Mock Data**: 100% connected to live Binance Futures endpoints.
 - [x] **Hedge & One-Way Mode Compatibility**: Automatically queries and adapts to user account position mode.
@@ -264,7 +283,7 @@ npm start
 
 ---
 
-## 9. License & Legal Disclaimer
+## 10. License & Legal Disclaimer
 
 **Proprietary Software — All Rights Reserved.**  
 Copyright &copy; 2026 **Trading Lifestyle Quant**. Developed for exclusive use by the Monorid App.

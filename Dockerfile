@@ -12,10 +12,7 @@ FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-ENV NEXT_TELEMETRY_DISABLED=1
-ENV NODE_ENV=production
-
-RUN npm run build
+RUN NEXT_TELEMETRY_DISABLED=1 NODE_ENV=production npm run build
 
 # Production image, copy all the files and run next
 FROM base AS runner
