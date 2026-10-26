@@ -17,7 +17,7 @@ import {
   evaluateSignalStrength,
   calculateTradeMarginAllocation
 } from './indicators';
-import { formatQuantity, formatPrice } from './binanceClient';
+import { formatQuantity, formatPrice, roundToStep, roundToTick } from './binanceClient';
 import { checkAssetQualification } from './scannerData';
 import { Candle } from './types';
 
@@ -552,6 +552,48 @@ test('Category round-robin scheduling and 60s cooldown prevent category starvati
   }
   dispatchOrder(9);
   assert.equal(lastCategoryIndex, 0, 'Round-robin wraps cleanly back to Category 0');
+});
+
+test('formatQuantity and roundToStep handle float division boundary cases (e.g. 0.29 / 0.01) without truncation', () => {
+  // Test known JavaScript float precision division bugs
+  assert.equal(formatQuantity(0.29, 0.01, 2), '0.29', '0.29 / 0.01 must not truncate to 0.28');
+  assert.equal(roundToStep(0.29, 0.01), 0.29, 'roundToStep(0.29, 0.01) must equal 0.29');
+
+  assert.equal(formatQuantity(0.07, 0.01, 2), '0.07', '0.07 / 0.01 must format to 0.07');
+  assert.equal(roundToStep(0.07, 0.01), 0.07, 'roundToStep(0.07, 0.01) must equal 0.07');
+
+  assert.equal(formatQuantity(1.14, 0.01, 2), '1.14', '1.14 / 0.01 must format to 1.14');
+  assert.equal(roundToStep(1.14, 0.01), 1.14, 'roundToStep(1.14, 0.01) must equal 1.14');
+
+  // Verify ticks
+  assert.equal(roundToTick(0.29, 0.01), 0.29);
+  assert.equal(formatPrice(0.29, 0.01, 2), '0.29');
+});
+
+test('Scanner indicator state and evaluateMonoridSignal decisions are in 100% agreement', () => {
+  const upCandles = generateTrendCandles(40, 100, 'up');
+  const signal = evaluateMonoridSignal('SOLUSDT', upCandles, 10, 3.0, 5);
+
+  const realSignalStatus =
+    signal.finalDecision === 'EXECUTE_LONG' ? 'CONFIRMED_BUY' :
+    signal.finalDecision === 'EXECUTE_SHORT' ? 'CONFIRMED_SELL' :
+    (signal.pmaxSignal === 'BUY' ? 'READY_BUY' : signal.pmaxSignal === 'SELL' ? 'READY_SELL' : 'NEUTRAL');
+
+  assert.equal(signal.finalDecision, 'EXECUTE_LONG');
+  assert.equal(realSignalStatus, 'CONFIRMED_BUY');
+  assert.equal(signal.proScalperConfirmed, true);
+
+  const downCandles = generateTrendCandles(40, 100, 'down');
+  const downSignal = evaluateMonoridSignal('SOLUSDT', downCandles, 10, 3.0, 5);
+
+  const downSignalStatus =
+    downSignal.finalDecision === 'EXECUTE_LONG' ? 'CONFIRMED_BUY' :
+    downSignal.finalDecision === 'EXECUTE_SHORT' ? 'CONFIRMED_SELL' :
+    (downSignal.pmaxSignal === 'BUY' ? 'READY_BUY' : downSignal.pmaxSignal === 'SELL' ? 'READY_SELL' : 'NEUTRAL');
+
+  assert.equal(downSignal.finalDecision, 'EXECUTE_SHORT');
+  assert.equal(downSignalStatus, 'CONFIRMED_SELL');
+  assert.equal(downSignal.proScalperConfirmed, true);
 });
 
 

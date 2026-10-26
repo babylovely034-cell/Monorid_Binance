@@ -24,6 +24,7 @@ interface DashboardMainProps {
   settings: TradingSettings;
   startingBalance: number;
   currentBalance: number;
+  availableBalance?: number;
   pnlDataPoints: PnLDataPoint[];
   onNavigateTab: (tabId: string) => void;
 }
@@ -34,6 +35,7 @@ export default function DashboardMain({
   settings,
   startingBalance,
   currentBalance,
+  availableBalance,
   pnlDataPoints,
   onNavigateTab,
 }: DashboardMainProps) {
@@ -46,7 +48,7 @@ export default function DashboardMain({
   const marginPerTrade = Math.max(0, currentBalance * 0.10);
   const totalOpenPositions = positions.length;
   const activeMargin = positions.reduce((sum, p) => sum + p.margin, 0);
-  const freeUsdt = Math.max(0, currentBalance - activeMargin);
+  const freeUsdt = availableBalance !== undefined && availableBalance >= 0 ? availableBalance : Math.max(0, currentBalance - activeMargin);
   const marginUsedPercent = currentBalance > 0 ? (activeMargin / currentBalance) * 100 : 0;
 
 

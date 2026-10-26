@@ -89,7 +89,7 @@ export async function getExchangeSymbolFilters(): Promise<Map<string, BinanceSym
  */
 export function roundToStep(value: number, step: number): number {
   if (!step || step <= 0) return value;
-  const numSteps = Math.floor(value / step);
+  const numSteps = Math.floor((value / step) + 1e-9);
   const stepStr = step.toString();
   const precision = stepStr.includes('.') ? stepStr.split('.')[1].length : 0;
   return Number((numSteps * step).toFixed(precision));
@@ -97,7 +97,7 @@ export function roundToStep(value: number, step: number): number {
 
 export function roundToTick(value: number, tick: number): number {
   if (!tick || tick <= 0) return value;
-  const numTicks = Math.round(value / tick);
+  const numTicks = Math.round((value / tick) + 1e-9);
   const tickStr = tick.toString();
   const precision = tickStr.includes('.') ? tickStr.split('.')[1].length : 0;
   return Number((numTicks * tick).toFixed(precision));
@@ -111,7 +111,7 @@ export function formatQuantity(value: number, stepSize: number, precision?: numb
   const stepStr = stepSize.toString();
   const stepDecimals = stepStr.includes('.') ? stepStr.split('.')[1].length : 0;
   const prec = precision !== undefined ? Math.min(stepDecimals, precision) : stepDecimals;
-  const numSteps = Math.floor(value / stepSize);
+  const numSteps = Math.floor((value / stepSize) + 1e-9);
   const truncated = numSteps * stepSize;
   return truncated.toFixed(prec);
 }
@@ -124,7 +124,7 @@ export function formatPrice(value: number, tickSize: number, precision?: number)
   const tickStr = tickSize.toString();
   const tickDecimals = tickStr.includes('.') ? tickStr.split('.')[1].length : 0;
   const prec = precision !== undefined ? Math.min(tickDecimals, precision) : tickDecimals;
-  const numTicks = Math.round(value / tickSize);
+  const numTicks = Math.round((value / tickSize) + 1e-9);
   const rounded = numTicks * tickSize;
   return rounded.toFixed(prec);
 }
@@ -534,13 +534,13 @@ export async function executeRealTrade(
   let effectiveMargin = margin;
   let notional = effectiveMargin * leverage;
 
-  // For symbols requiring $5 min notional, clamp margin to meet minNotional floor
-  if (notional < minNotional && minNotional <= 5.5) {
+  // For symbols requiring $5 min notional or near threshold, clamp margin to meet minNotional floor
+  if (notional < minNotional && (minNotional <= 5.5 || minNotional - notional <= 0.1)) {
     effectiveMargin = (minNotional + 0.05) / leverage;
     notional = effectiveMargin * leverage;
   }
 
-  if (notional < minNotional) {
+  if (notional < minNotional - 0.001) {
     const minReqMargin = minNotional / leverage;
     throw new Error(`Order notional ($${notional.toFixed(2)}) is below Binance minimum threshold ($${minNotional.toFixed(2)}). Requires at least $${minReqMargin.toFixed(2)} margin at ${leverage}x leverage.`);
   }

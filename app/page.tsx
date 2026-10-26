@@ -192,17 +192,22 @@ export default function HomePage() {
 
   // 2. Fetch Live Binance Account Overview & Positions
   const syncAccountData = async (apiKey?: string, apiSecret?: string) => {
+    const key = apiKey || settingsRef.current.apiKey;
+    const secret = apiSecret || settingsRef.current.apiSecret;
+    if (!key || !secret) return;
+
     try {
-      const headers: Record<string, string> = {};
-      if (apiKey) headers['x-binance-api-key'] = apiKey;
-      if (apiSecret) headers['x-binance-api-secret'] = apiSecret;
+      const headers: Record<string, string> = {
+        'x-binance-api-key': key,
+        'x-binance-api-secret': secret
+      };
 
       const res = await fetch('/api/binance/account', { headers });
       const data = await res.json();
 
       if (res.ok && data.success) {
         const wallet = data.walletBalance || 0;
-        const available = data.availableBalance || 0;
+        const available = data.availableBalance !== undefined ? data.availableBalance : wallet;
 
         setLiveCurrentBalance(wallet);
         setLiveAvailableBalance(available);
@@ -273,14 +278,16 @@ export default function HomePage() {
   };
 
   // 3. Fetch Real Trade History from Binance
-  const syncTradeHistory = async (apiKey: string, apiSecret: string) => {
-    if (!apiKey || !apiSecret) return;
+  const syncTradeHistory = async (apiKey?: string, apiSecret?: string) => {
+    const key = apiKey || settingsRef.current.apiKey;
+    const secret = apiSecret || settingsRef.current.apiSecret;
+    if (!key || !secret) return;
 
     try {
       const res = await fetch('/api/binance/history?limit=30', {
         headers: {
-          'x-binance-api-key': apiKey,
-          'x-binance-api-secret': apiSecret
+          'x-binance-api-key': key,
+          'x-binance-api-secret': secret
         }
       });
       const data = await res.json();
@@ -459,33 +466,30 @@ export default function HomePage() {
             const candles = getCandlesForSymbol(asset.symbol);
             if (candles.length < 20) return asset;
 
+            const signal = evaluateMonoridSignal(asset.symbol, candles, 10, 3.0, settingsRef.current.swingLookbackBars);
             const pmax = calculatePMax(candles, 10, 3.0, 10);
-            const scalper = calculateProScalperAI(candles);
             const lastPMax = pmax[pmax.length - 1];
-            const lastScalper = scalper[scalper.length - 1];
-            const swings = getRecentSwingLevels(candles, settingsRef.current.swingLookbackBars);
 
-            let signalStatus: AssetScanningState['signalStatus'] = 'NEUTRAL';
-            if (lastPMax.dir === 1) {
-              signalStatus = (lastScalper.condStrongBuy || lastScalper.isAboveZero) ? 'CONFIRMED_BUY' : 'READY_BUY';
-            } else {
-              signalStatus = (lastScalper.condStrongSell || lastScalper.isBelowZero) ? 'CONFIRMED_SELL' : 'READY_SELL';
-            }
+            const realSignalStatus: AssetScanningState['signalStatus'] =
+              signal.finalDecision === 'EXECUTE_LONG' ? 'CONFIRMED_BUY' :
+              signal.finalDecision === 'EXECUTE_SHORT' ? 'CONFIRMED_SELL' :
+              (signal.pmaxSignal === 'BUY' ? 'READY_BUY' : signal.pmaxSignal === 'SELL' ? 'READY_SELL' : 'NEUTRAL');
 
-            const pmaxSignalVal: 'BUY' | 'SELL' | 'HOLD' = lastPMax.buySignal ? 'BUY' : lastPMax.sellSignal ? 'SELL' : 'HOLD';
+            const pmaxSignalVal: 'BUY' | 'SELL' | 'HOLD' = signal.pmaxSignal === 'BUY' ? 'BUY' : signal.pmaxSignal === 'SELL' ? 'SELL' : 'HOLD';
+            const latestPrice = candles[candles.length - 1]?.close || asset.currentPrice;
 
             return {
               ...asset,
-              pmaxDir: lastPMax.dir,
-              pmaxMAvg: lastPMax.mAvg,
-              pmaxLine: lastPMax.pMax,
+              currentPrice: latestPrice,
+              pmaxDir: lastPMax?.dir || asset.pmaxDir,
+              pmaxMAvg: lastPMax?.mAvg || asset.pmaxMAvg,
+              pmaxLine: lastPMax?.pMax || asset.pmaxLine,
               pmaxSignal: pmaxSignalVal,
-              proScalperOsc: lastScalper.oscillator,
-              proScalperConfirmed: (lastPMax.dir === 1 && (lastScalper.condStrongBuy || lastScalper.isAboveZero)) ||
-                                   (lastPMax.dir === -1 && (lastScalper.condStrongSell || lastScalper.isBelowZero)),
-              signalStatus,
-              swingLow: swings.swingLow,
-              swingHigh: swings.swingHigh
+              proScalperOsc: signal.proScalperOsc,
+              proScalperConfirmed: signal.finalDecision === 'EXECUTE_LONG' || signal.finalDecision === 'EXECUTE_SHORT',
+              signalStatus: realSignalStatus,
+              swingLow: signal.swingLow,
+              swingHigh: signal.swingHigh
             };
           });
           return { ...cat, assets: nextAssets };
@@ -498,18 +502,12 @@ export default function HomePage() {
   useEffect(() => {
     syncRealTickers();
     syncRotatingKlines(true);
-    syncAccountData(settings.apiKey, settings.apiSecret);
     const tickerInterval = setInterval(syncRealTickers, 20000);
     const klinesInterval = setInterval(() => syncRotatingKlines(false), 12000);
-    const accInterval = setInterval(() => {
-      syncAccountData(settings.apiKey, settings.apiSecret);
-    }, 15000);
     return () => {
       clearInterval(tickerInterval);
       clearInterval(klinesInterval);
-      clearInterval(accInterval);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -585,11 +583,18 @@ export default function HomePage() {
           if (asset.symbol === ticker.symbol) {
             catChanged = true;
             changed = true;
+            const price = ticker.price || asset.currentPrice;
+            const change24h = ticker.change24h || asset.change24h;
+            const volume24h = ticker.volume24h || asset.volume24h;
+            const qual = checkAssetQualification({ volume24h, change24h, price });
+
             return {
               ...asset,
-              currentPrice: ticker.price,
-              change24h: ticker.change24h || asset.change24h,
-              volume24h: ticker.volume24h || asset.volume24h
+              currentPrice: price,
+              change24h,
+              volume24h,
+              isQualified: qual.isQualified,
+              disqualificationReason: qual.reason
             };
           }
           return asset;
@@ -618,7 +623,9 @@ export default function HomePage() {
   // 7. Real Trade Execution on Binance USDT-M Futures
   const executeTrade = async (symbol: string, category: string, side: 'LONG' | 'SHORT'): Promise<boolean> => {
     // Evaluate trade sizing against free available margin so we do not over-allocate committed margin
-    const curBalance = availableBalanceRef.current > 0 ? availableBalanceRef.current : currentBalanceRef.current;
+    const curBalance = availableBalanceRef.current > 0
+      ? availableBalanceRef.current
+      : (positionsRef.current.length === 0 ? currentBalanceRef.current : 0);
 
     // Requirement: "Keep 1.20$ balance in my account if our balance below 1.20$ no trade executed. Waiting for balance available"
     const marginAllocation = calculateTradeMarginAllocation(curBalance, 0.10, 1.20);
@@ -740,7 +747,7 @@ export default function HomePage() {
     let margin = marginAllocation.margin;
 
     if (symbol === 'BTCUSDT') {
-      const minMarginReq = 50.0 / leverage; // Binance BTCUSDT requires $50.00 min notional
+      const minMarginReq = 50.05 / leverage; // Binance BTCUSDT requires $50.00 min notional
       if (usableTradingBalance < minMarginReq) {
         addLog(
           'EXECUTION',
@@ -754,7 +761,7 @@ export default function HomePage() {
       }
       margin = Math.max(margin, minMarginReq);
     } else if (symbol === 'ETHUSDT') {
-      const minMarginReq = 20.0 / leverage; // Binance ETHUSDT requires $20.00 min notional
+      const minMarginReq = 20.05 / leverage; // Binance ETHUSDT requires $20.00 min notional
       if (usableTradingBalance < minMarginReq) {
         addLog(
           'EXECUTION',
@@ -1140,6 +1147,7 @@ export default function HomePage() {
             settings={settings}
             startingBalance={liveStartingBalance}
             currentBalance={liveCurrentBalance}
+            availableBalance={liveAvailableBalance}
             pnlDataPoints={pnlHistory}
             onNavigateTab={setActiveTab}
           />

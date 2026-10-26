@@ -46,10 +46,12 @@ export default function AssetInspectModal({
   const lastPMax = pmaxData[pmaxData.length - 1];
   const lastScalper = proScalperData[proScalperData.length - 1];
 
-  const isLong = lastPMax?.dir === 1;
-  const isOscAboveZero = lastScalper?.oscillator > 0;
-  const isConfirmed = (isLong && (lastScalper?.condStrongBuy || isOscAboveZero)) ||
-                      (!isLong && (lastScalper?.condStrongSell || !isOscAboveZero));
+  const currentOsc = lastScalper !== undefined ? lastScalper.oscillator : asset.proScalperOsc;
+  const isLong = lastPMax ? lastPMax.dir === 1 : (asset.pmaxDir === 1);
+  const isOscAboveZero = currentOsc > 0;
+  const isConfirmed = lastScalper
+    ? ((isLong && (lastScalper.condStrongBuy || isOscAboveZero)) || (!isLong && (lastScalper.condStrongSell || !isOscAboveZero)))
+    : asset.proScalperConfirmed;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
@@ -91,7 +93,7 @@ export default function AssetInspectModal({
             <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
               <span className="text-slate-500 block text-[10px]">MOMENTUM OSC</span>
               <span className={`text-sm font-bold ${isOscAboveZero ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {lastScalper.oscillator > 0 ? '+' : ''}{lastScalper.oscillator.toFixed(2)}
+                {currentOsc > 0 ? '+' : ''}{currentOsc.toFixed(2)}
               </span>
             </div>
             <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
@@ -117,7 +119,7 @@ export default function AssetInspectModal({
               <div className="flex items-center justify-between">
                 <span>2. Composite Momentum Zero Line:</span>
                 <span className={`font-bold ${isOscAboveZero ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {isOscAboveZero ? 'Oscillator Above 0 (+ ' + lastScalper.oscillator.toFixed(1) + ')' : 'Oscillator Below 0 (' + lastScalper.oscillator.toFixed(1) + ')'}
+                  {isOscAboveZero ? 'Oscillator Above 0 (+ ' + currentOsc.toFixed(1) + ')' : 'Oscillator Below 0 (' + currentOsc.toFixed(1) + ')'}
                 </span>
               </div>
               <div className="flex items-center justify-between">
