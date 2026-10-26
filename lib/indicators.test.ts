@@ -370,3 +370,78 @@ test('Running trade protective TP and SL calculation for LONG and SHORT position
   assert.ok(tightSL > tightLiqShortPrice, 'Guard must keep SL above current price');
 });
 
+test('formatPrice and formatQuantity strictly enforce discrete tick and step multiples', async () => {
+  const { formatPrice, formatQuantity, roundToStep, roundToTick } = await import('./binanceClient');
+
+  // Test 1: tickSize 0.05 (like BTC or certain futures contracts)
+  const priceWith05Tick = formatPrice(100.02, 0.05, 2);
+  assert.equal(priceWith05Tick, '100.00', '100.02 with 0.05 tick must round to 100.00 multiple');
+  const priceWith05TickHigh = formatPrice(100.03, 0.05, 2);
+  assert.equal(priceWith05TickHigh, '100.05', '100.03 with 0.05 tick must round to 100.05 multiple');
+
+  // Test 2: stepSize 1 with 0 quantity precision (like ICPUSDT, ADAUSDT)
+  const qtyStep1 = formatQuantity(7.9, 1, 0);
+  assert.equal(qtyStep1, '7', '7.9 with stepSize 1 must floor to integer string 7');
+
+  // Test 3: stepSize 0.1 with 1 decimal (like SUIUSDT, DOTUSDT, APTUSDT)
+  const qtyStep01 = formatQuantity(14.39, 0.1, 1);
+  assert.equal(qtyStep01, '14.3', '14.39 with stepSize 0.1 must floor to 14.3');
+
+  // Test 4: roundToStep & roundToTick
+  assert.equal(roundToStep(14.39, 0.1), 14.3);
+  assert.equal(roundToTick(100.03, 0.05), 100.05);
+});
+
+test('SL and TP order classifier correctly identifies Algo Orders and ignores non-protective Limit orders', () => {
+  const isPosLong = true;
+  const markPrice = 100.0;
+
+  const isSL = (o: any) => {
+    const type = o.orderType || o.type || o.origType || '';
+    if (['STOP_MARKET', 'STOP', 'STOP_LOSS', 'STOP_LOSS_LIMIT'].includes(type)) return true;
+    const trigger = parseFloat(o.triggerPrice || o.stopPrice || '0');
+    if (trigger > 0) {
+      return isPosLong ? trigger < markPrice : trigger > markPrice;
+    }
+    return false;
+  };
+
+  const isTP = (o: any) => {
+    const type = o.orderType || o.type || o.origType || '';
+    if (['TAKE_PROFIT_MARKET', 'TAKE_PROFIT', 'TAKE_PROFIT_LIMIT'].includes(type)) return true;
+    const trigger = parseFloat(o.triggerPrice || o.stopPrice || '0');
+    if (trigger > 0) {
+      return isPosLong ? trigger > markPrice : trigger < markPrice;
+    }
+    if ((o.reduceOnly === true || o.reduceOnly === 'true') && parseFloat(o.price || '0') > 0) {
+      const limitPrice = parseFloat(o.price);
+      return isPosLong ? limitPrice > markPrice : limitPrice < markPrice;
+    }
+    return false;
+  };
+
+  // Case 1: Binance Algo Order for Stop Loss (orderType: 'STOP_MARKET', triggerPrice: '98.0')
+  const algoSL = { algoId: 101, algoType: 'CONDITIONAL', orderType: 'STOP_MARKET', triggerPrice: '98.0' };
+  assert.equal(isSL(algoSL), true, 'Algo STOP_MARKET order must be identified as SL');
+  assert.equal(isTP(algoSL), false, 'Algo STOP_MARKET must not be identified as TP');
+
+  // Case 2: Binance Algo Order for Take Profit (orderType: 'TAKE_PROFIT_MARKET', triggerPrice: '104.0')
+  const algoTP = { algoId: 102, algoType: 'CONDITIONAL', orderType: 'TAKE_PROFIT_MARKET', triggerPrice: '104.0' };
+  assert.equal(isTP(algoTP), true, 'Algo TAKE_PROFIT_MARKET order must be identified as TP');
+  assert.equal(isSL(algoTP), false, 'Algo TAKE_PROFIT_MARKET must not be identified as SL');
+
+  // Case 3: Regular BUY LIMIT order below mark price (e.g. entry dip order) MUST NOT BE SL!
+  const normalLimitBuy = { orderId: 201, type: 'LIMIT', price: '95.0', side: 'BUY' };
+  assert.equal(isSL(normalLimitBuy), false, 'Unrelated regular BUY LIMIT order must NOT be identified as SL');
+  assert.equal(isTP(normalLimitBuy), false, 'Regular BUY LIMIT must NOT be identified as TP');
+
+  // Case 4: Regular SELL LIMIT order above mark price without reduceOnly MUST NOT BE TP!
+  const normalLimitSell = { orderId: 202, type: 'LIMIT', price: '105.0', side: 'SELL' };
+  assert.equal(isTP(normalLimitSell), false, 'Regular SELL LIMIT order without reduceOnly must NOT be identified as TP');
+
+  // Case 5: Reduce-only SELL LIMIT order above mark price IS a valid Take Profit
+  const reduceOnlyTPSell = { orderId: 203, type: 'LIMIT', price: '105.0', side: 'SELL', reduceOnly: true };
+  assert.equal(isTP(reduceOnlyTPSell), true, 'Reduce-only SELL LIMIT order above mark price must be identified as TP');
+});
+
+

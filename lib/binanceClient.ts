@@ -69,8 +69,8 @@ export async function getExchangeSymbolFilters(): Promise<Map<string, BinanceSym
           tickSize,
           minQty,
           minNotional,
-          quantityPrecision: s.quantityPrecision || 3,
-          pricePrecision: s.pricePrecision || 2
+          quantityPrecision: s.quantityPrecision ?? 3,
+          pricePrecision: s.pricePrecision ?? 2
         });
       }
     }
@@ -89,15 +89,18 @@ export async function getExchangeSymbolFilters(): Promise<Map<string, BinanceSym
  */
 export function roundToStep(value: number, step: number): number {
   if (!step || step <= 0) return value;
-  const precision = Math.max(0, Math.round(-Math.log10(step)));
-  const factor = 10 ** precision;
-  return Math.floor(value * factor) / factor;
+  const numSteps = Math.floor(value / step);
+  const stepStr = step.toString();
+  const precision = stepStr.includes('.') ? stepStr.split('.')[1].length : 0;
+  return Number((numSteps * step).toFixed(precision));
 }
 
 export function roundToTick(value: number, tick: number): number {
   if (!tick || tick <= 0) return value;
-  const precision = Math.max(0, Math.round(-Math.log10(tick)));
-  return Number(value.toFixed(precision));
+  const numTicks = Math.round(value / tick);
+  const tickStr = tick.toString();
+  const precision = tickStr.includes('.') ? tickStr.split('.')[1].length : 0;
+  return Number((numTicks * tick).toFixed(precision));
 }
 
 /**
@@ -108,8 +111,8 @@ export function formatQuantity(value: number, stepSize: number, precision?: numb
   const stepStr = stepSize.toString();
   const stepDecimals = stepStr.includes('.') ? stepStr.split('.')[1].length : 0;
   const prec = precision !== undefined ? Math.min(stepDecimals, precision) : stepDecimals;
-  const factor = 10 ** prec;
-  const truncated = Math.floor(value * factor) / factor;
+  const numSteps = Math.floor(value / stepSize);
+  const truncated = numSteps * stepSize;
   return truncated.toFixed(prec);
 }
 
@@ -121,8 +124,8 @@ export function formatPrice(value: number, tickSize: number, precision?: number)
   const tickStr = tickSize.toString();
   const tickDecimals = tickStr.includes('.') ? tickStr.split('.')[1].length : 0;
   const prec = precision !== undefined ? Math.min(tickDecimals, precision) : tickDecimals;
-  const factor = 10 ** prec;
-  const rounded = Math.round(value * factor) / factor;
+  const numTicks = Math.round(value / tickSize);
+  const rounded = numTicks * tickSize;
   return rounded.toFixed(prec);
 }
 
@@ -257,6 +260,34 @@ export async function getBinanceAccountOverview(apiKey: string, apiSecret: strin
     }
   }
 
+  // Also query Binance Algo Orders (/fapi/v1/openAlgoOrders) for conditional TP/SL orders
+  let openAlgoOrders: any[] = [];
+  try {
+    const algoRes = await sendSignedRequest('GET', '/fapi/v1/openAlgoOrders', {}, apiKey, apiSecret);
+    if (Array.isArray(algoRes)) {
+      openAlgoOrders = algoRes;
+    }
+  } catch {
+    const activeSymbols = Array.from(new Set(
+      (Array.isArray(positionRisks) ? positionRisks : [])
+        .filter((p: any) => parseFloat(p.positionAmt) !== 0)
+        .map((p: any) => p.symbol)
+    ));
+    for (const sym of activeSymbols) {
+      try {
+        const symAlgo = await sendSignedRequest('GET', '/fapi/v1/openAlgoOrders', { symbol: sym }, apiKey, apiSecret);
+        if (Array.isArray(symAlgo)) {
+          openAlgoOrders.push(...symAlgo);
+        }
+      } catch {}
+    }
+  }
+
+  const allActiveOrders = [
+    ...(Array.isArray(openOrders) ? openOrders : []),
+    ...(Array.isArray(openAlgoOrders) ? openAlgoOrders : [])
+  ];
+
   const walletBalance = parseFloat(account.totalWalletBalance || '0');
   const availableBalance = parseFloat(account.availableBalance || '0');
   const unrealizedProfit = parseFloat(account.totalUnrealizedProfit || '0');
@@ -273,16 +304,41 @@ export async function getBinanceAccountOverview(apiKey: string, apiSecret: strin
       const margin = parseFloat(p.isolatedWallet) || (Math.abs(amt) * entryPrice) / leverage;
       const unRealizedProfit = parseFloat(p.unRealizedProfit);
       const netPnlPercent = margin > 0 ? (unRealizedProfit / margin) * 100 : 0;
+      const isPosLong = amt > 0;
 
-      // Find open SL and TP orders for this symbol
-      const symbolOrders = Array.isArray(openOrders) ? openOrders.filter((o: any) => o.symbol === p.symbol) : [];
-      const slOrder = symbolOrders.find((o: any) => 
-        o.type === 'STOP_MARKET' || o.type === 'STOP' || o.origType === 'STOP_MARKET' || o.origType === 'STOP' ||
-        o.type === 'STOP_LOSS' || o.origType === 'STOP_LOSS'
-      );
-      const tpOrder = symbolOrders.find((o: any) => 
-        o.type === 'TAKE_PROFIT_MARKET' || o.type === 'TAKE_PROFIT' || o.origType === 'TAKE_PROFIT_MARKET' || o.origType === 'TAKE_PROFIT'
-      );
+      // Find open SL and TP orders for this symbol across both regular and algo orders
+      const symbolOrders = allActiveOrders.filter((o: any) => o.symbol === p.symbol);
+      const getOrderPrice = (o: any) => parseFloat(o.triggerPrice || o.stopPrice || o.price || '0');
+
+      const isSL = (o: any) => {
+        const type = o.orderType || o.type || o.origType || '';
+        if (['STOP_MARKET', 'STOP', 'STOP_LOSS', 'STOP_LOSS_LIMIT'].includes(type)) return true;
+        const trigger = parseFloat(o.triggerPrice || o.stopPrice || '0');
+        if (trigger > 0) {
+          return isPosLong ? trigger < markPrice : trigger > markPrice;
+        }
+        return false;
+      };
+
+      const isTP = (o: any) => {
+        const type = o.orderType || o.type || o.origType || '';
+        if (['TAKE_PROFIT_MARKET', 'TAKE_PROFIT', 'TAKE_PROFIT_LIMIT'].includes(type)) return true;
+        const trigger = parseFloat(o.triggerPrice || o.stopPrice || '0');
+        if (trigger > 0) {
+          return isPosLong ? trigger > markPrice : trigger < markPrice;
+        }
+        if ((o.reduceOnly === true || o.reduceOnly === 'true') && parseFloat(o.price || '0') > 0) {
+          const limitPrice = parseFloat(o.price);
+          return isPosLong ? limitPrice > markPrice : limitPrice < markPrice;
+        }
+        return false;
+      };
+
+      const slOrder = symbolOrders.find(isSL);
+      const tpOrder = symbolOrders.find(isTP);
+
+      const slPrice = slOrder ? getOrderPrice(slOrder) : 0;
+      const tpPrice = tpOrder ? getOrderPrice(tpOrder) : 0;
 
       return {
         id: `binance-${p.symbol}-${p.updateTime || Date.now()}`,
@@ -297,10 +353,10 @@ export async function getBinanceAccountOverview(apiKey: string, apiSecret: strin
         signalStrength: leverage >= 15 ? ('BEST' as const) : ('GOOD' as const),
         margin,
         entryTime: p.updateTime || Date.now(),
-        stopLoss: slOrder ? parseFloat(slOrder.stopPrice) : 0,
-        takeProfit: tpOrder ? parseFloat(tpOrder.stopPrice) : 0,
-        stopLossOrderId: slOrder?.orderId,
-        takeProfitOrderId: tpOrder?.orderId,
+        stopLoss: slPrice,
+        takeProfit: tpPrice,
+        stopLossOrderId: slOrder?.algoId || slOrder?.orderId,
+        takeProfitOrderId: tpOrder?.algoId || tpOrder?.orderId,
         liquidationPrice: parseFloat(p.liquidationPrice) || 0,
         recentSwingPrice: entryPrice,
         grossPnl: unRealizedProfit,
@@ -329,6 +385,105 @@ export async function setBinanceLeverage(symbol: string, leverage: number, apiKe
     symbol,
     leverage
   }, apiKey, apiSecret);
+}
+
+/**
+ * Places a conditional Stop Loss or Take Profit order using Binance Algo Order API (/fapi/v1/algoOrder)
+ * with multi-tier fallback support.
+ */
+export async function placeConditionalOrder(
+  params: {
+    symbol: string;
+    side: 'BUY' | 'SELL';
+    type: 'STOP_MARKET' | 'TAKE_PROFIT_MARKET';
+    triggerPrice: string;
+    quantity: string;
+    isDualSide: boolean;
+    isLong: boolean;
+  },
+  apiKey: string,
+  apiSecret: string
+): Promise<any> {
+  const { symbol, side, type, triggerPrice, quantity, isDualSide, isLong } = params;
+
+  // Tier 1: Binance Algo Order API (/fapi/v1/algoOrder)
+  try {
+    const algoParams: Record<string, any> = {
+      algoType: 'CONDITIONAL',
+      symbol,
+      side,
+      type,
+      triggerPrice,
+      workingType: 'MARK_PRICE',
+      priceProtect: 'TRUE'
+    };
+
+    if (isDualSide) {
+      algoParams.positionSide = isLong ? 'LONG' : 'SHORT';
+      algoParams.quantity = quantity;
+    } else {
+      algoParams.positionSide = 'BOTH';
+      algoParams.closePosition = 'true';
+    }
+
+    return await sendSignedRequest('POST', '/fapi/v1/algoOrder', algoParams, apiKey, apiSecret);
+  } catch (algoErr1: any) {
+    // Tier 2: If closePosition was rejected in One-Way mode, retry with reduceOnly: 'true' and quantity
+    if (!isDualSide) {
+      try {
+        const algoParamsReduceOnly: Record<string, any> = {
+          algoType: 'CONDITIONAL',
+          symbol,
+          side,
+          type,
+          triggerPrice,
+          quantity,
+          reduceOnly: 'true',
+          positionSide: 'BOTH',
+          workingType: 'MARK_PRICE',
+          priceProtect: 'TRUE'
+        };
+        return await sendSignedRequest('POST', '/fapi/v1/algoOrder', algoParamsReduceOnly, apiKey, apiSecret);
+      } catch (algoErr2: any) {
+        // Tier 3: Legacy /fapi/v1/order endpoint fallback
+        try {
+          const legacyParams: Record<string, any> = {
+            symbol,
+            side,
+            type,
+            stopPrice: triggerPrice,
+            workingType: 'MARK_PRICE'
+          };
+          if (isDualSide) {
+            legacyParams.positionSide = isLong ? 'LONG' : 'SHORT';
+            legacyParams.quantity = quantity;
+          } else {
+            legacyParams.positionSide = 'BOTH';
+            legacyParams.closePosition = 'true';
+          }
+          return await sendSignedRequest('POST', '/fapi/v1/order', legacyParams, apiKey, apiSecret);
+        } catch {
+          throw new Error(algoErr1?.message || algoErr2?.message || 'Failed to place conditional order on Binance');
+        }
+      }
+    }
+    throw algoErr1;
+  }
+}
+
+/**
+ * Cancels all open regular orders AND open algorithmic conditional orders for a symbol
+ */
+export async function cancelOpenPositionOrders(symbol: string, apiKey: string, apiSecret: string): Promise<void> {
+  // Cancel standard open orders
+  try {
+    await sendSignedRequest('DELETE', '/fapi/v1/allOpenOrders', { symbol }, apiKey, apiSecret);
+  } catch {}
+
+  // Cancel open algo orders
+  try {
+    await sendSignedRequest('DELETE', '/fapi/v1/algoOpenOrders', { symbol }, apiKey, apiSecret);
+  } catch {}
 }
 
 /**
@@ -408,51 +563,39 @@ export async function executeRealTrade(
   const executedPrice = parseFloat(entryOrder.avgPrice) || currentPrice;
   const exitSide = side === 'LONG' ? 'SELL' : 'BUY';
 
-  // 6. Place Stop Loss Order (STOP_MARKET)
+  // 6. Place Stop Loss Order (STOP_MARKET) via Algo Order API
   let stopLossOrder: any = null;
   let stopLossError: string | null = null;
   const formattedSL = formatPrice(stopLoss, tickSize, pricePrecision);
   try {
-    const slParams: Record<string, any> = {
+    stopLossOrder = await placeConditionalOrder({
       symbol,
       side: exitSide,
       type: 'STOP_MARKET',
-      stopPrice: formattedSL,
-      workingType: 'MARK_PRICE'
-    };
-    if (isDualSide) {
-      slParams.positionSide = side === 'LONG' ? 'LONG' : 'SHORT';
-      slParams.quantity = formattedQty;
-    } else {
-      slParams.positionSide = 'BOTH';
-      slParams.closePosition = 'true';
-    }
-    stopLossOrder = await sendSignedRequest('POST', '/fapi/v1/order', slParams, apiKey, apiSecret);
+      triggerPrice: formattedSL,
+      quantity: formattedQty,
+      isDualSide,
+      isLong: side === 'LONG'
+    }, apiKey, apiSecret);
   } catch (slErr: any) {
     stopLossError = slErr?.message || String(slErr);
     console.error(`Failed to place Stop Loss for ${symbol}:`, slErr);
   }
 
-  // 7. Place Take Profit Order (TAKE_PROFIT_MARKET)
+  // 7. Place Take Profit Order (TAKE_PROFIT_MARKET) via Algo Order API
   let takeProfitOrder: any = null;
   let takeProfitError: string | null = null;
   const formattedTP = formatPrice(takeProfit, tickSize, pricePrecision);
   try {
-    const tpParams: Record<string, any> = {
+    takeProfitOrder = await placeConditionalOrder({
       symbol,
       side: exitSide,
       type: 'TAKE_PROFIT_MARKET',
-      stopPrice: formattedTP,
-      workingType: 'MARK_PRICE'
-    };
-    if (isDualSide) {
-      tpParams.positionSide = side === 'LONG' ? 'LONG' : 'SHORT';
-      tpParams.quantity = formattedQty;
-    } else {
-      tpParams.positionSide = 'BOTH';
-      tpParams.closePosition = 'true';
-    }
-    takeProfitOrder = await sendSignedRequest('POST', '/fapi/v1/order', tpParams, apiKey, apiSecret);
+      triggerPrice: formattedTP,
+      quantity: formattedQty,
+      isDualSide,
+      isLong: side === 'LONG'
+    }, apiKey, apiSecret);
   } catch (tpErr: any) {
     takeProfitError = tpErr?.message || String(tpErr);
     console.error(`Failed to place Take Profit for ${symbol}:`, tpErr);
@@ -467,8 +610,8 @@ export async function executeRealTrade(
     leverage,
     margin,
     entryOrderId: entryOrder.orderId,
-    stopLossOrderId: stopLossOrder?.orderId,
-    takeProfitOrderId: takeProfitOrder?.orderId,
+    stopLossOrderId: stopLossOrder?.algoId || stopLossOrder?.orderId,
+    takeProfitOrderId: takeProfitOrder?.algoId || takeProfitOrder?.orderId,
     stopLoss: parseFloat(formattedSL),
     takeProfit: parseFloat(formattedTP),
     stopLossError,
@@ -486,7 +629,9 @@ export async function closeRealPosition(
 ) {
   // 1. Fetch current open position size
   const positionRisks = await sendSignedRequest('GET', '/fapi/v2/positionRisk', { symbol }, apiKey, apiSecret);
-  const pos = Array.isArray(positionRisks) ? positionRisks.find((p: any) => p.symbol === symbol) : null;
+  const pos = Array.isArray(positionRisks)
+    ? (positionRisks.find((p: any) => p.symbol === symbol && parseFloat(p.positionAmt) !== 0) || positionRisks.find((p: any) => p.symbol === symbol))
+    : null;
   const posAmt = pos ? parseFloat(pos.positionAmt) : 0;
 
   let closeOrder = null;
@@ -522,12 +667,8 @@ export async function closeRealPosition(
     );
   }
 
-  // 2. Cancel all remaining open orders for this symbol (TP / SL)
-  try {
-    await sendSignedRequest('DELETE', '/fapi/v1/allOpenOrders', { symbol }, apiKey, apiSecret);
-  } catch (err) {
-    // Ignore if no open orders exist
-  }
+  // 2. Cancel all remaining regular & algorithmic open orders for this symbol
+  await cancelOpenPositionOrders(symbol, apiKey, apiSecret);
 
   return {
     success: true,
@@ -594,7 +735,9 @@ export async function setOrUpdatePositionTPSL(
 ) {
   // 1. Fetch current open position
   const positionRisks = await sendSignedRequest('GET', '/fapi/v2/positionRisk', { symbol }, apiKey, apiSecret);
-  const pos = Array.isArray(positionRisks) ? positionRisks.find((p: any) => p.symbol === symbol) : null;
+  const pos = Array.isArray(positionRisks)
+    ? (positionRisks.find((p: any) => p.symbol === symbol && parseFloat(p.positionAmt) !== 0) || positionRisks.find((p: any) => p.symbol === symbol))
+    : null;
   const posAmt = pos ? parseFloat(pos.positionAmt) : 0;
 
   if (posAmt === 0) {
@@ -689,92 +832,40 @@ export async function setOrUpdatePositionTPSL(
   const exitSide = isLong ? 'SELL' : 'BUY';
 
   // 4. Cancel existing open orders for symbol to prevent multiple conflicting SL/TP orders
-  try {
-    await sendSignedRequest('DELETE', '/fapi/v1/allOpenOrders', { symbol }, apiKey, apiSecret);
-  } catch {}
+  await cancelOpenPositionOrders(symbol, apiKey, apiSecret);
 
-  // 5. Place Stop Loss Order (STOP_MARKET) with automatic fallback
+  // 5. Place Stop Loss Order (STOP_MARKET) via Algo Order API
   let stopLossOrder: any = null;
   let stopLossError: string | null = null;
-  const slParams: Record<string, any> = {
-    symbol,
-    side: exitSide,
-    type: 'STOP_MARKET',
-    stopPrice: formattedSL,
-    workingType: 'MARK_PRICE'
-  };
-  if (isDualSide) {
-    slParams.positionSide = isLong ? 'LONG' : 'SHORT';
-    slParams.quantity = formattedQty;
-  } else {
-    slParams.positionSide = 'BOTH';
-    slParams.closePosition = 'true';
-  }
-
   try {
-    stopLossOrder = await sendSignedRequest('POST', '/fapi/v1/order', slParams, apiKey, apiSecret);
+    stopLossOrder = await placeConditionalOrder({
+      symbol,
+      side: exitSide,
+      type: 'STOP_MARKET',
+      triggerPrice: formattedSL,
+      quantity: formattedQty,
+      isDualSide,
+      isLong
+    }, apiKey, apiSecret);
   } catch (err: any) {
-    if (!isDualSide && slParams.closePosition === 'true') {
-      try {
-        const fallbackParams = {
-          symbol,
-          side: exitSide,
-          type: 'STOP_MARKET',
-          stopPrice: formattedSL,
-          quantity: formattedQty,
-          reduceOnly: 'true',
-          positionSide: 'BOTH',
-          workingType: 'MARK_PRICE'
-        };
-        stopLossOrder = await sendSignedRequest('POST', '/fapi/v1/order', fallbackParams, apiKey, apiSecret);
-      } catch (fallbackErr: any) {
-        stopLossError = fallbackErr?.message || err?.message || String(err);
-      }
-    } else {
-      stopLossError = err?.message || String(err);
-    }
+    stopLossError = err?.message || String(err);
   }
 
-  // 6. Place Take Profit Order (TAKE_PROFIT_MARKET) with automatic fallback
+  // 6. Place Take Profit Order (TAKE_PROFIT_MARKET) via Algo Order API
   let takeProfitOrder: any = null;
   let takeProfitError: string | null = null;
-  const tpParams: Record<string, any> = {
-    symbol,
-    side: exitSide,
-    type: 'TAKE_PROFIT_MARKET',
-    stopPrice: formattedTP,
-    workingType: 'MARK_PRICE'
-  };
-  if (isDualSide) {
-    tpParams.positionSide = isLong ? 'LONG' : 'SHORT';
-    tpParams.quantity = formattedQty;
-  } else {
-    tpParams.positionSide = 'BOTH';
-    tpParams.closePosition = 'true';
-  }
-
   try {
-    takeProfitOrder = await sendSignedRequest('POST', '/fapi/v1/order', tpParams, apiKey, apiSecret);
+    takeProfitOrder = await placeConditionalOrder({
+      symbol,
+      side: exitSide,
+      type: 'TAKE_PROFIT_MARKET',
+      triggerPrice: formattedTP,
+      quantity: formattedQty,
+      isDualSide,
+      isLong
+    }, apiKey, apiSecret);
   } catch (err: any) {
-    if (!isDualSide && tpParams.closePosition === 'true') {
-      try {
-        const fallbackParams = {
-          symbol,
-          side: exitSide,
-          type: 'TAKE_PROFIT_MARKET',
-          stopPrice: formattedTP,
-          quantity: formattedQty,
-          reduceOnly: 'true',
-          positionSide: 'BOTH',
-          workingType: 'MARK_PRICE'
-        };
-        takeProfitOrder = await sendSignedRequest('POST', '/fapi/v1/order', fallbackParams, apiKey, apiSecret);
-      } catch (fallbackErr: any) {
-        takeProfitError = fallbackErr?.message || err?.message || String(err);
-      }
-    } else {
-      takeProfitError = err?.message || String(err);
-    }
+    takeProfitError = err?.message || String(err);
   }
 
   if (!stopLossOrder && !takeProfitOrder) {
@@ -788,8 +879,8 @@ export async function setOrUpdatePositionTPSL(
     currentPrice,
     stopLoss: stopLossOrder ? parseFloat(formattedSL) : 0,
     takeProfit: takeProfitOrder ? parseFloat(formattedTP) : 0,
-    stopLossOrderId: stopLossOrder?.orderId,
-    takeProfitOrderId: takeProfitOrder?.orderId,
+    stopLossOrderId: stopLossOrder?.algoId || stopLossOrder?.orderId,
+    takeProfitOrderId: takeProfitOrder?.algoId || takeProfitOrder?.orderId,
     stopLossError,
     takeProfitError
   };
@@ -814,23 +905,50 @@ export async function setOrUpdateAllPositionsTPSL(apiKey: string, apiSecret: str
     };
   }
 
-  // 2. Fetch current open orders to identify positions without SL or TP
+  // 2. Fetch current open regular & algo orders to identify positions without SL or TP
   let openOrders: any[] = [];
   try {
     openOrders = await sendSignedRequest('GET', '/fapi/v1/openOrders', {}, apiKey, apiSecret);
   } catch {}
 
+  let openAlgoOrders: any[] = [];
+  try {
+    const algoRes = await sendSignedRequest('GET', '/fapi/v1/openAlgoOrders', {}, apiKey, apiSecret);
+    if (Array.isArray(algoRes)) {
+      openAlgoOrders = algoRes;
+    }
+  } catch {}
+
+  const allOrders = [
+    ...(Array.isArray(openOrders) ? openOrders : []),
+    ...(Array.isArray(openAlgoOrders) ? openAlgoOrders : [])
+  ];
+
   const results: any[] = [];
   for (const pos of activePositions) {
     const sym = pos.symbol;
-    const symOrders = Array.isArray(openOrders) ? openOrders.filter((o: any) => o.symbol === sym) : [];
-    const hasSL = symOrders.some((o: any) => 
-      o.type === 'STOP_MARKET' || o.type === 'STOP' || o.origType === 'STOP_MARKET' || o.origType === 'STOP' ||
-      o.type === 'STOP_LOSS' || o.origType === 'STOP_LOSS'
-    );
-    const hasTP = symOrders.some((o: any) => 
-      o.type === 'TAKE_PROFIT_MARKET' || o.type === 'TAKE_PROFIT' || o.origType === 'TAKE_PROFIT_MARKET' || o.origType === 'TAKE_PROFIT'
-    );
+    const symOrders = allOrders.filter((o: any) => o.symbol === sym);
+    const isLong = parseFloat(pos.positionAmt) > 0;
+    const markPrice = parseFloat(pos.markPrice);
+
+    const hasSL = symOrders.some((o: any) => {
+      const type = o.orderType || o.type || o.origType || '';
+      if (['STOP_MARKET', 'STOP', 'STOP_LOSS', 'STOP_LOSS_LIMIT'].includes(type)) return true;
+      const trigger = parseFloat(o.triggerPrice || o.stopPrice || '0');
+      return trigger > 0 && (isLong ? trigger < markPrice : trigger > markPrice);
+    });
+
+    const hasTP = symOrders.some((o: any) => {
+      const type = o.orderType || o.type || o.origType || '';
+      if (['TAKE_PROFIT_MARKET', 'TAKE_PROFIT', 'TAKE_PROFIT_LIMIT'].includes(type)) return true;
+      const trigger = parseFloat(o.triggerPrice || o.stopPrice || '0');
+      if (trigger > 0) return isLong ? trigger > markPrice : trigger < markPrice;
+      if ((o.reduceOnly === true || o.reduceOnly === 'true') && parseFloat(o.price || '0') > 0) {
+        const limitPrice = parseFloat(o.price);
+        return isLong ? limitPrice > markPrice : limitPrice < markPrice;
+      }
+      return false;
+    });
 
     // If missing SL or TP, place full 1:2 RR protection
     if (!hasSL || !hasTP) {

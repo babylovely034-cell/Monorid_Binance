@@ -274,10 +274,21 @@ export default function PositionsOrdersView({
               <tbody className="divide-y divide-slate-800/60">
                 {positions.map((pos) => {
                   const isLong = pos.side === 'LONG';
-                  const distToSL = pos.stopLoss > 0 ? Math.abs(pos.currentPrice - pos.stopLoss) / pos.currentPrice * 100 : 0;
-                  const distToTP = pos.takeProfit > 0 ? Math.abs(pos.takeProfit - pos.currentPrice) / pos.currentPrice * 100 : 0;
-                  const distToLiq = pos.liquidationPrice > 0 ? Math.abs(pos.currentPrice - pos.liquidationPrice) / pos.currentPrice * 100 : 0;
-                  const isProtected = pos.stopLoss > 0 && pos.takeProfit > 0;
+                  const entryPrice = pos.entryPrice || 0;
+                  const currentPrice = pos.currentPrice || entryPrice;
+                  const margin = pos.margin || 0;
+                  const quantity = pos.quantity || 0;
+                  const stopLoss = pos.stopLoss || 0;
+                  const takeProfit = pos.takeProfit || 0;
+                  const liquidationPrice = pos.liquidationPrice || 0;
+                  const feesPaid = pos.feesPaid || 0;
+                  const netPnl = pos.netPnl || 0;
+                  const netPnlPercent = pos.netPnlPercent || 0;
+
+                  const distToSL = stopLoss > 0 && currentPrice > 0 ? Math.abs(currentPrice - stopLoss) / currentPrice * 100 : 0;
+                  const distToTP = takeProfit > 0 && currentPrice > 0 ? Math.abs(takeProfit - currentPrice) / currentPrice * 100 : 0;
+                  const distToLiq = liquidationPrice > 0 && currentPrice > 0 ? Math.abs(currentPrice - liquidationPrice) / currentPrice * 100 : 0;
+                  const isProtected = stopLoss > 0 && takeProfit > 0;
                   const isSymbolProtecting = protectingSymbols.includes(pos.symbol);
 
                   return (
@@ -291,7 +302,7 @@ export default function PositionsOrdersView({
                           <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
                             isLong ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
                           }`}>
-                            {pos.side} {pos.leverage}x
+                            {pos.side} {pos.leverage || 10}x
                           </span>
                           <span className={`text-[9px] px-1 py-0.2 rounded font-bold ${
                             pos.signalStrength === 'BEST' ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-300'
@@ -300,35 +311,35 @@ export default function PositionsOrdersView({
                           </span>
                         </div>
                         <span className="text-[10px] text-slate-500 block">
-                          Entered {new Date(pos.entryTime).toLocaleTimeString()}
+                          Entered {new Date(pos.entryTime || Date.now()).toLocaleTimeString()}
                         </span>
                       </td>
 
                       {/* Size / Margin (10% balance) */}
                       <td className="py-3 px-4 text-right">
                         <div className="text-white font-medium">
-                          ${(pos.entryPrice * pos.quantity).toFixed(2)}
+                          ${(entryPrice * quantity).toFixed(2)}
                         </div>
                         <div className="text-[10px] text-slate-400">
-                          Margin: ${pos.margin.toFixed(2)} (10%)
+                          Margin: ${margin.toFixed(2)} (10%)
                         </div>
                       </td>
 
                       {/* Entry Price */}
                       <td className="py-3 px-4 text-right text-slate-300">
-                        ${pos.entryPrice.toFixed(4)}
+                        ${entryPrice.toFixed(4)}
                       </td>
 
                       {/* Mark Price */}
                       <td className="py-3 px-4 text-right text-white font-bold">
-                        ${pos.currentPrice.toFixed(4)}
+                        ${currentPrice.toFixed(4)}
                       </td>
 
                       {/* Stop Loss (Swing Level) */}
                       <td className="py-3 px-4 text-right text-rose-400 font-semibold">
-                        {pos.stopLoss > 0 ? (
+                        {stopLoss > 0 ? (
                           <>
-                            <div>${pos.stopLoss.toFixed(4)}</div>
+                            <div>${stopLoss.toFixed(4)}</div>
                             <div className="text-[9px] text-slate-500">{distToSL.toFixed(2)}% away</div>
                           </>
                         ) : (
@@ -340,15 +351,15 @@ export default function PositionsOrdersView({
 
                       {/* Liquidation Price */}
                       <td className="py-3 px-4 text-right text-purple-400 font-mono">
-                        <div>${pos.liquidationPrice > 0 ? pos.liquidationPrice.toFixed(4) : '--'}</div>
+                        <div>${liquidationPrice > 0 ? liquidationPrice.toFixed(4) : '--'}</div>
                         <div className="text-[9px] text-slate-500">{distToLiq.toFixed(2)}% away</div>
                       </td>
 
                       {/* Take Profit (1:2 RR Target) */}
                       <td className="py-3 px-4 text-right text-emerald-400 font-semibold">
-                        {pos.takeProfit > 0 ? (
+                        {takeProfit > 0 ? (
                           <>
-                            <div>${pos.takeProfit.toFixed(4)}</div>
+                            <div>${takeProfit.toFixed(4)}</div>
                             <div className="text-[9px] text-slate-500">{distToTP.toFixed(2)}% away</div>
                           </>
                         ) : (
@@ -360,16 +371,16 @@ export default function PositionsOrdersView({
 
                       {/* Platform Fees */}
                       <td className="py-3 px-4 text-right text-slate-400">
-                        -${pos.feesPaid.toFixed(3)}
+                        -${feesPaid.toFixed(3)}
                       </td>
 
                       {/* Net PnL After Fees */}
                       <td className="py-3 px-4 text-right">
-                        <div className={`text-sm font-bold ${pos.netPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          {pos.netPnl >= 0 ? '+' : ''}${pos.netPnl.toFixed(2)}
+                        <div className={`text-sm font-bold ${netPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {netPnl >= 0 ? '+' : ''}${netPnl.toFixed(2)}
                         </div>
-                        <div className={`text-[10px] font-bold ${pos.netPnlPercent >= 0 ? 'text-emerald-400/80' : 'text-rose-400/80'}`}>
-                          {pos.netPnlPercent >= 0 ? '+' : ''}{pos.netPnlPercent.toFixed(2)}% ROI
+                        <div className={`text-[10px] font-bold ${netPnlPercent >= 0 ? 'text-emerald-400/80' : 'text-rose-400/80'}`}>
+                          {netPnlPercent >= 0 ? '+' : ''}{netPnlPercent.toFixed(2)}% ROI
                         </div>
                       </td>
 

@@ -212,21 +212,24 @@ export default function HomePage() {
         if (Array.isArray(data.openPositions)) {
           setPositions(prev => {
             const prevMap = new Map(prev.map(p => [p.symbol, p]));
+            const now = Date.now();
             return data.openPositions.map((livePos: Position) => {
               const existing = prevMap.get(livePos.symbol);
+              const lastProtect = lastProtectAttemptRef.current.get(livePos.symbol) || 0;
+              const isRecentProtect = now - lastProtect < 30000;
               return {
                 ...livePos,
                 id: existing?.id || livePos.id,
-                stopLoss: livePos.stopLoss || existing?.stopLoss || 0,
-                takeProfit: livePos.takeProfit || existing?.takeProfit || 0,
+                stopLoss: livePos.stopLoss || (isRecentProtect && existing?.stopLoss ? existing.stopLoss : 0),
+                takeProfit: livePos.takeProfit || (isRecentProtect && existing?.takeProfit ? existing.takeProfit : 0),
                 leverage: livePos.leverage || existing?.leverage || 10,
                 signalStrength: existing?.signalStrength || livePos.signalStrength,
                 margin: livePos.margin || existing?.margin || 0,
                 feesPaid: existing?.feesPaid || 0,
                 category: existing?.category || livePos.category,
                 binanceOrderId: existing?.binanceOrderId || livePos.binanceOrderId,
-                stopLossOrderId: livePos.stopLossOrderId || existing?.stopLossOrderId,
-                takeProfitOrderId: livePos.takeProfitOrderId || existing?.takeProfitOrderId
+                stopLossOrderId: livePos.stopLossOrderId || (isRecentProtect ? existing?.stopLossOrderId : undefined),
+                takeProfitOrderId: livePos.takeProfitOrderId || (isRecentProtect ? existing?.takeProfitOrderId : undefined)
               };
             });
           });
@@ -235,12 +238,12 @@ export default function HomePage() {
           if (settingsRef.current.autoShieldEnabled !== false) {
             const now = Date.now();
             for (const livePos of data.openPositions) {
-              const needsShield = (!livePos.stopLoss || livePos.stopLoss === 0) || (!livePos.takeProfit || livePos.takeProfit === 0);
               const lastAttempt = lastProtectAttemptRef.current.get(livePos.symbol) || 0;
-              const isCoolingDown = now - lastAttempt < 20000; // 20s cooldown
+              const isRecentAttempt = now - lastAttempt < 20000; // 20s cooldown
               const isInFlight = inFlightProtectRef.current.has(livePos.symbol);
+              const needsShield = (!livePos.stopLoss || livePos.stopLoss === 0) || (!livePos.takeProfit || livePos.takeProfit === 0);
 
-              if (needsShield && !isCoolingDown && !isInFlight) {
+              if (needsShield && !isRecentAttempt && !isInFlight) {
                 handleProtectPositionRef.current(livePos.symbol);
               }
             }
