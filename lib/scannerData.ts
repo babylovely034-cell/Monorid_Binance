@@ -329,12 +329,8 @@ export function buildInitialCategoriesState(): CategorySummary[] {
       const lastScalper = proScalper[proScalper.length - 1] || { oscillator: 15, isAboveZero: true, isBelowZero: false };
       const swings = getRecentSwingLevels(candles, 5);
 
-      let signalStatus: AssetScanningState['signalStatus'] = 'NEUTRAL';
-      if (lastPMax.dir === 1) {
-        signalStatus = lastScalper.isAboveZero ? 'CONFIRMED_BUY' : 'READY_BUY';
-      } else {
-        signalStatus = lastScalper.isBelowZero ? 'CONFIRMED_SELL' : 'READY_SELL';
-      }
+      // Initialize to NEUTRAL; real signals populate once live Binance 5m klines are fetched
+      const signalStatus: AssetScanningState['signalStatus'] = 'NEUTRAL';
 
       assets.push({
         symbol: sym,
@@ -351,7 +347,7 @@ export function buildInitialCategoriesState(): CategorySummary[] {
         pmaxLine: lastPMax.pMax,
         pmaxSignal: lastPMax.buySignal ? 'BUY' : lastPMax.sellSignal ? 'SELL' : 'HOLD',
         proScalperOsc: lastScalper.oscillator,
-        proScalperConfirmed: (lastPMax.dir === 1 && lastScalper.isAboveZero) || (lastPMax.dir === -1 && lastScalper.isBelowZero),
+        proScalperConfirmed: false,
         signalStatus,
         swingLow: swings.swingLow,
         swingHigh: swings.swingHigh,

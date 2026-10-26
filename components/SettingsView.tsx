@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { TradingSettings } from '@/lib/types';
 import { 
   Settings, 
@@ -41,6 +41,14 @@ export default function SettingsView({
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isSaved, setIsSaved] = useState(false);
+
+  useEffect(() => {
+    setFormData(prev => ({
+      ...prev,
+      ...settings,
+      maxOpenPositions: settings.maxOpenPositions || prev.maxOpenPositions || 10
+    }));
+  }, [settings]);
 
   const handleCopyIp = () => {
     if (userIp) {

@@ -109,6 +109,9 @@ export default function HomePage() {
   const settingsRef = useRef<TradingSettings>(settings);
   const currentBalanceRef = useRef<number>(liveCurrentBalance);
   const availableBalanceRef = useRef<number>(liveAvailableBalance);
+  const categoriesRef = useRef<CategorySummary[]>(categories);
+  const rejectedSymbolsCooldownRef = useRef<Map<string, number>>(new Map());
+  const lastCategoryIndexRef = useRef<number>(0);
   const handleTickerUpdateRef = useRef<(ticker: TickerUpdate) => void>(() => {});
   const inFlightProtectRef = useRef<Set<string>>(new Set());
   const lastProtectAttemptRef = useRef<Map<string, number>>(new Map());
@@ -129,6 +132,10 @@ export default function HomePage() {
   useEffect(() => {
     availableBalanceRef.current = liveAvailableBalance;
   }, [liveAvailableBalance]);
+
+  useEffect(() => {
+    categoriesRef.current = categories;
+  }, [categories]);
 
   // Add Log Entry Helper
   const addLog = (
@@ -165,17 +172,19 @@ export default function HomePage() {
         setUserIp('104.28.192.45');
       });
 
-    // Load API Keys from localStorage
+    // Load API Keys and settings from localStorage
     try {
       const savedKey = localStorage.getItem('monorid_binance_api_key') || '';
       const savedSecret = localStorage.getItem('monorid_binance_api_secret') || '';
-      if (savedKey && savedSecret) {
-        setSettings(prev => ({
-          ...prev,
-          apiKey: savedKey,
-          apiSecret: savedSecret
-        }));
-      }
+      const savedMaxPos = localStorage.getItem('monorid_binance_max_positions');
+      const parsedMaxPos = savedMaxPos ? parseInt(savedMaxPos, 10) : NaN;
+
+      setSettings(prev => ({
+        ...prev,
+        apiKey: savedKey || prev.apiKey,
+        apiSecret: savedSecret || prev.apiSecret,
+        maxOpenPositions: (!isNaN(parsedMaxPos) && parsedMaxPos > 0) ? parsedMaxPos : prev.maxOpenPositions
+      }));
     } catch {
       // Ignore localStorage read errors
     }
@@ -375,57 +384,109 @@ export default function HomePage() {
     }
   };
 
-  // 5. Fetch real 5m Binance candles for top category movers to calculate live indicators
-  const syncTopMoversKlines = async () => {
+  // 5. Fetch real 5m Binance candles rotating across all assets in the categories
+  const klineRotationCursorRef = useRef<number>(0);
+
+  const syncRotatingKlines = async (isInitial: boolean = false) => {
     try {
-      const symbolsToFetch = Array.from(new Set(categories.map(c => c.assets[0]?.symbol).filter(Boolean)));
-      for (const sym of symbolsToFetch) {
-        try {
-          const res = await fetch(`/api/binance/klines?symbol=${sym}&interval=5m&limit=60`);
-          if (res.ok) {
-            const data = await res.json();
-            if (data.success && Array.isArray(data.klines) && data.klines.length >= 20) {
-              setCandlesForSymbol(sym, data.klines);
+      const currentCats = categoriesRef.current;
+      if (currentCats.length === 0) return;
+
+      // Interleave assets across all categories so all categories get updated evenly
+      const orderedSymbols: string[] = [];
+      const seen = new Set<string>();
+
+      if (isInitial) {
+        // On initial boot, prioritize the top mover of each category
+        for (const cat of currentCats) {
+          const sym = cat.assets[0]?.symbol;
+          if (sym && !seen.has(sym)) {
+            seen.add(sym);
+            orderedSymbols.push(sym);
+          }
+        }
+      } else {
+        for (let idx = 0; idx < 16; idx++) {
+          for (const cat of currentCats) {
+            const sym = cat.assets[idx]?.symbol;
+            if (sym && !seen.has(sym)) {
+              seen.add(sym);
+              orderedSymbols.push(sym);
             }
           }
-        } catch {}
+        }
       }
+
+      if (orderedSymbols.length === 0) return;
+
+      const batchSize = isInitial ? 10 : 15;
+      const start = isInitial ? 0 : (klineRotationCursorRef.current % orderedSymbols.length);
+      const batch: string[] = [];
+      for (let i = 0; i < batchSize; i++) {
+        const sym = orderedSymbols[(start + i) % orderedSymbols.length];
+        if (sym && !batch.includes(sym)) {
+          batch.push(sym);
+        }
+      }
+
+      if (!isInitial) {
+        klineRotationCursorRef.current = (start + batchSize) % orderedSymbols.length;
+      }
+
+      const fetchedSymbols = new Set<string>();
+      await Promise.allSettled(
+        batch.map(async (sym) => {
+          try {
+            const res = await fetch(`/api/binance/klines?symbol=${sym}&interval=5m&limit=60`);
+            if (res.ok) {
+              const data = await res.json();
+              if (data.success && Array.isArray(data.klines) && data.klines.length >= 20) {
+                setCandlesForSymbol(sym, data.klines);
+                fetchedSymbols.add(sym);
+              }
+            }
+          } catch {}
+        })
+      );
+
+      if (fetchedSymbols.size === 0) return;
 
       setCategories(prevCats => {
         return prevCats.map(cat => {
           const nextAssets = cat.assets.map(asset => {
+            if (!fetchedSymbols.has(asset.symbol)) return asset;
+
             const candles = getCandlesForSymbol(asset.symbol);
-            if (candles.length >= 20) {
-              const pmax = calculatePMax(candles, 10, 3.0, 10);
-              const scalper = calculateProScalperAI(candles);
-              const lastPMax = pmax[pmax.length - 1];
-              const lastScalper = scalper[scalper.length - 1];
-              const swings = getRecentSwingLevels(candles, 5);
+            if (candles.length < 20) return asset;
 
-              let signalStatus: AssetScanningState['signalStatus'] = 'NEUTRAL';
-              if (lastPMax.dir === 1) {
-                signalStatus = (lastScalper.condStrongBuy || lastScalper.isAboveZero) ? 'CONFIRMED_BUY' : 'READY_BUY';
-              } else {
-                signalStatus = (lastScalper.condStrongSell || lastScalper.isBelowZero) ? 'CONFIRMED_SELL' : 'READY_SELL';
-              }
+            const pmax = calculatePMax(candles, 10, 3.0, 10);
+            const scalper = calculateProScalperAI(candles);
+            const lastPMax = pmax[pmax.length - 1];
+            const lastScalper = scalper[scalper.length - 1];
+            const swings = getRecentSwingLevels(candles, settingsRef.current.swingLookbackBars);
 
-              const pmaxSignalVal: 'BUY' | 'SELL' | 'HOLD' = lastPMax.buySignal ? 'BUY' : lastPMax.sellSignal ? 'SELL' : 'HOLD';
-
-              return {
-                ...asset,
-                pmaxDir: lastPMax.dir,
-                pmaxMAvg: lastPMax.mAvg,
-                pmaxLine: lastPMax.pMax,
-                pmaxSignal: pmaxSignalVal,
-                proScalperOsc: lastScalper.oscillator,
-                proScalperConfirmed: (lastPMax.dir === 1 && (lastScalper.condStrongBuy || lastScalper.isAboveZero)) ||
-                                     (lastPMax.dir === -1 && (lastScalper.condStrongSell || lastScalper.isBelowZero)),
-                signalStatus,
-                swingLow: swings.swingLow,
-                swingHigh: swings.swingHigh
-              };
+            let signalStatus: AssetScanningState['signalStatus'] = 'NEUTRAL';
+            if (lastPMax.dir === 1) {
+              signalStatus = (lastScalper.condStrongBuy || lastScalper.isAboveZero) ? 'CONFIRMED_BUY' : 'READY_BUY';
+            } else {
+              signalStatus = (lastScalper.condStrongSell || lastScalper.isBelowZero) ? 'CONFIRMED_SELL' : 'READY_SELL';
             }
-            return asset;
+
+            const pmaxSignalVal: 'BUY' | 'SELL' | 'HOLD' = lastPMax.buySignal ? 'BUY' : lastPMax.sellSignal ? 'SELL' : 'HOLD';
+
+            return {
+              ...asset,
+              pmaxDir: lastPMax.dir,
+              pmaxMAvg: lastPMax.mAvg,
+              pmaxLine: lastPMax.pMax,
+              pmaxSignal: pmaxSignalVal,
+              proScalperOsc: lastScalper.oscillator,
+              proScalperConfirmed: (lastPMax.dir === 1 && (lastScalper.condStrongBuy || lastScalper.isAboveZero)) ||
+                                   (lastPMax.dir === -1 && (lastScalper.condStrongSell || lastScalper.isBelowZero)),
+              signalStatus,
+              swingLow: swings.swingLow,
+              swingHigh: swings.swingHigh
+            };
           });
           return { ...cat, assets: nextAssets };
         });
@@ -436,10 +497,10 @@ export default function HomePage() {
   // Initial & Periodic Data Polling
   useEffect(() => {
     syncRealTickers();
-    syncTopMoversKlines();
+    syncRotatingKlines(true);
     syncAccountData(settings.apiKey, settings.apiSecret);
     const tickerInterval = setInterval(syncRealTickers, 20000);
-    const klinesInterval = setInterval(syncTopMoversKlines, 30000);
+    const klinesInterval = setInterval(() => syncRotatingKlines(false), 12000);
     const accInterval = setInterval(() => {
       syncAccountData(settings.apiKey, settings.apiSecret);
     }, 15000);
@@ -555,7 +616,7 @@ export default function HomePage() {
   });
 
   // 7. Real Trade Execution on Binance USDT-M Futures
-  const executeTrade = async (symbol: string, category: string, side: 'LONG' | 'SHORT') => {
+  const executeTrade = async (symbol: string, category: string, side: 'LONG' | 'SHORT'): Promise<boolean> => {
     // Evaluate trade sizing against free available margin so we do not over-allocate committed margin
     const curBalance = availableBalanceRef.current > 0 ? availableBalanceRef.current : currentBalanceRef.current;
 
@@ -569,22 +630,23 @@ export default function HomePage() {
         symbol,
         category
       );
-      return;
+      rejectedSymbolsCooldownRef.current.set(symbol, Date.now());
+      return false;
     }
 
-    if (positions.length >= settings.maxOpenPositions) {
+    if (positionsRef.current.length >= settingsRef.current.maxOpenPositions) {
       addLog(
         'EXECUTION',
         'WARNING',
-        `Trade order for ${symbol} rejected: Maximum open positions limit (${settings.maxOpenPositions}) reached.`,
+        `Trade order for ${symbol} rejected: Maximum open positions limit (${settingsRef.current.maxOpenPositions}) reached.`,
         symbol,
         category
       );
-      return;
+      return false;
     }
 
-    if (positions.some(p => p.symbol === symbol)) {
-      return;
+    if (positionsRef.current.some(p => p.symbol === symbol)) {
+      return false;
     }
 
     // Fetch latest real 5m candles from Binance to guarantee live indicator accuracy
@@ -600,21 +662,42 @@ export default function HomePage() {
       }
     } catch {}
 
-    const signal = evaluateMonoridSignal(symbol, candles, 10, 3.0, settings.swingLookbackBars);
+    const signal = evaluateMonoridSignal(symbol, candles, 10, 3.0, settingsRef.current.swingLookbackBars);
+
+    // Synchronize asset state in categories with live indicator evaluation
+    const realSignalStatus: AssetScanningState['signalStatus'] =
+      signal.finalDecision === 'EXECUTE_LONG' ? 'CONFIRMED_BUY' :
+      signal.finalDecision === 'EXECUTE_SHORT' ? 'CONFIRMED_SELL' :
+      (signal.pmaxSignal === 'BUY' ? 'READY_BUY' : signal.pmaxSignal === 'SELL' ? 'READY_SELL' : 'NEUTRAL');
+
+    setCategories(prevCats => prevCats.map(cat => ({
+      ...cat,
+      assets: cat.assets.map(a => a.symbol === symbol ? {
+        ...a,
+        signalStatus: realSignalStatus,
+        proScalperConfirmed: signal.finalDecision === 'EXECUTE_LONG' || signal.finalDecision === 'EXECUTE_SHORT',
+        proScalperOsc: signal.proScalperOsc,
+        pmaxSignal: signal.pmaxSignal === 'BUY' ? 'BUY' : signal.pmaxSignal === 'SELL' ? 'SELL' : 'HOLD',
+        swingLow: signal.swingLow,
+        swingHigh: signal.swingHigh
+      } : a)
+    })));
 
     // Requirement: "Both indicators must agree: PMax triggers the primary signal direction, and Pro Scalper AI provides the confirmed filter/confirmation before opening real Binance USDT-M Futures orders."
     if (side === 'LONG' && signal.finalDecision !== 'EXECUTE_LONG') {
       addLog('EXECUTION', 'INFO', `Signal rejected for ${symbol}: ${signal.reason}`, symbol, category);
-      return;
+      rejectedSymbolsCooldownRef.current.set(symbol, Date.now());
+      return false;
     }
     if (side === 'SHORT' && signal.finalDecision !== 'EXECUTE_SHORT') {
       addLog('EXECUTION', 'INFO', `Signal rejected for ${symbol}: ${signal.reason}`, symbol, category);
-      return;
+      rejectedSymbolsCooldownRef.current.set(symbol, Date.now());
+      return false;
     }
 
     const isBuyExpected = side === 'LONG';
     const currentPrice = candles[candles.length - 1].close;
-    const swings = getRecentSwingLevels(candles, settings.swingLookbackBars);
+    const swings = getRecentSwingLevels(candles, settingsRef.current.swingLookbackBars);
 
     // Requirement: "Best signal use 15x or good signal use 10x leverage."
     const signalEval = evaluateSignalStrength(side, signal.proScalperOsc, 25, signal.isStrong);
@@ -648,13 +731,71 @@ export default function HomePage() {
         symbol,
         category
       );
-      return;
+      rejectedSymbolsCooldownRef.current.set(symbol, Date.now());
+      return false;
     }
 
-    const margin = marginAllocation.margin;
+    // Binance Minimum Notional Handling & Margin Allocation
+    const usableTradingBalance = Math.max(0, curBalance - 1.20);
+    let margin = marginAllocation.margin;
+
+    if (symbol === 'BTCUSDT') {
+      const minMarginReq = 50.0 / leverage; // Binance BTCUSDT requires $50.00 min notional
+      if (usableTradingBalance < minMarginReq) {
+        addLog(
+          'EXECUTION',
+          'INFO',
+          `Skipping ${symbol}: Binance requires $50.00 min notional ($${minMarginReq.toFixed(2)} margin at ${leverage}x), but usable balance is $${usableTradingBalance.toFixed(2)}. Proceeding to other pairs...`,
+          symbol,
+          category
+        );
+        rejectedSymbolsCooldownRef.current.set(symbol, Date.now());
+        return false;
+      }
+      margin = Math.max(margin, minMarginReq);
+    } else if (symbol === 'ETHUSDT') {
+      const minMarginReq = 20.0 / leverage; // Binance ETHUSDT requires $20.00 min notional
+      if (usableTradingBalance < minMarginReq) {
+        addLog(
+          'EXECUTION',
+          'INFO',
+          `Skipping ${symbol}: Binance requires $20.00 min notional ($${minMarginReq.toFixed(2)} margin at ${leverage}x), but usable balance is $${usableTradingBalance.toFixed(2)}. Proceeding to other pairs...`,
+          symbol,
+          category
+        );
+        rejectedSymbolsCooldownRef.current.set(symbol, Date.now());
+        return false;
+      }
+      margin = Math.max(margin, minMarginReq);
+    } else {
+      // Altcoin pairs requiring $5 min notional
+      const minNotionalTarget = 5.05;
+      const minMarginFor5Notional = minNotionalTarget / leverage;
+
+      if (margin * leverage < 5.0) {
+        if (usableTradingBalance >= 0.55) {
+          margin = Math.max(margin, Math.min(usableTradingBalance, minMarginFor5Notional));
+        } else if (usableTradingBalance >= minMarginFor5Notional) {
+          margin = minMarginFor5Notional;
+        } else {
+          addLog(
+            'EXECUTION',
+            'INFO',
+            `Skipping ${symbol}: Usable balance ($${usableTradingBalance.toFixed(2)}) is insufficient for $5.00 min notional ($${minMarginFor5Notional.toFixed(2)} margin at ${leverage}x).`,
+            symbol,
+            category
+          );
+          rejectedSymbolsCooldownRef.current.set(symbol, Date.now());
+          return false;
+        }
+      }
+    }
+
+    // Ensure margin does not exceed usable balance
+    margin = Math.min(margin, usableTradingBalance);
 
     // Check if Binance API credentials are configured for real order submission
-    if (!settings.apiKey || !settings.apiSecret) {
+    if (!settingsRef.current.apiKey || !settingsRef.current.apiSecret) {
       addLog(
         'EXECUTION',
         'WARNING',
@@ -662,7 +803,8 @@ export default function HomePage() {
         symbol,
         category
       );
-      return;
+      rejectedSymbolsCooldownRef.current.set(symbol, Date.now());
+      return false;
     }
 
     // Execute Real Order via Signed Binance Futures API Route
@@ -679,8 +821,8 @@ export default function HomePage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-binance-api-key': settings.apiKey,
-          'x-binance-api-secret': settings.apiSecret
+          'x-binance-api-key': settingsRef.current.apiKey,
+          'x-binance-api-secret': settingsRef.current.apiSecret
         },
         body: JSON.stringify({
           symbol,
@@ -701,6 +843,7 @@ export default function HomePage() {
       const trade = orderData.trade;
       const executedPrice = trade.executedPrice || currentPrice;
       const quantity = trade.quantity;
+      const actualMargin = trade.margin || margin;
 
       const newPosition: Position = {
         id: `pos-${trade.entryOrderId || Date.now()}`,
@@ -713,16 +856,16 @@ export default function HomePage() {
         quantity,
         leverage,
         signalStrength,
-        margin,
+        margin: actualMargin,
         entryTime: Date.now(),
         stopLoss: trade.stopLoss || stopLoss,
         takeProfit: trade.takeProfit || takeProfit,
         liquidationPrice,
         recentSwingPrice: isBuyExpected ? swings.swingLow : swings.swingHigh,
         grossPnl: 0,
-        feesPaid: margin * leverage * settings.takerFeeRate,
-        netPnl: -(margin * leverage * settings.takerFeeRate),
-        netPnlPercent: -settings.takerFeeRate * leverage * 100,
+        feesPaid: actualMargin * leverage * settingsRef.current.takerFeeRate,
+        netPnl: -(actualMargin * leverage * settingsRef.current.takerFeeRate),
+        netPnlPercent: -settingsRef.current.takerFeeRate * leverage * 100,
         status: 'OPEN',
         binanceOrderId: trade.entryOrderId,
         stopLossOrderId: trade.stopLossOrderId,
@@ -734,7 +877,7 @@ export default function HomePage() {
       addLog(
         'EXECUTION',
         'SUCCESS',
-        `[BINANCE LIVE FILLS] Real ${side} order executed for ${symbol} @ ${executedPrice.toFixed(4)}. Order ID: ${trade.entryOrderId}. Leverage: ${leverage}x (${signalStrength}). Margin: ${margin.toFixed(2)}. SL: ${trade.stopLoss} (Swing ${isBuyExpected ? 'Low' : 'High'}), Liq: ${liquidationPrice.toFixed(4)} (Shield Active), TP: ${trade.takeProfit} (1:2 RR).`,
+        `[BINANCE LIVE FILLS] Real ${side} order executed for ${symbol} @ ${executedPrice.toFixed(4)}. Order ID: ${trade.entryOrderId}. Leverage: ${leverage}x (${signalStrength}). Margin: ${actualMargin.toFixed(2)}. SL: ${trade.stopLoss} (Swing ${isBuyExpected ? 'Low' : 'High'}), Liq: ${liquidationPrice.toFixed(4)} (Shield Active), TP: ${trade.takeProfit} (1:2 RR).`,
         symbol,
         category
       );
@@ -759,7 +902,8 @@ export default function HomePage() {
       }
 
       // Re-sync wallet balance after order fill
-      syncAccountData(settings.apiKey, settings.apiSecret);
+      syncAccountData(settingsRef.current.apiKey, settingsRef.current.apiSecret);
+      return true;
     } catch (err: any) {
       addLog(
         'EXECUTION',
@@ -768,6 +912,8 @@ export default function HomePage() {
         symbol,
         category
       );
+      rejectedSymbolsCooldownRef.current.set(symbol, Date.now());
+      return false;
     }
   };
 
@@ -905,9 +1051,9 @@ export default function HomePage() {
     if (!settings.autoTradingEnabled) return;
 
     let lastCapacityLog = 0;
-    const interval = setInterval(() => {
+    const interval = setInterval(async () => {
       const openSymbols = new Set(positionsRef.current.map(p => p.symbol));
-      const maxPositions = settingsRef.current.maxOpenPositions;
+      const maxPositions = settingsRef.current.maxOpenPositions || 10;
       if (openSymbols.size >= maxPositions) {
         const now = Date.now();
         if (now - lastCapacityLog > 60000) {
@@ -921,23 +1067,44 @@ export default function HomePage() {
         return;
       }
 
-      for (const cat of categories) {
+      const currentCats = categoriesRef.current;
+      const totalCats = currentCats.length;
+      if (totalCats === 0) return;
+      const startCatIdx = lastCategoryIndexRef.current % totalCats;
+
+      for (let c = 0; c < totalCats; c++) {
+        const currentCatIdx = (startCatIdx + c) % totalCats;
+        const cat = currentCats[currentCatIdx];
+
         for (const asset of cat.assets) {
           if (openSymbols.has(asset.symbol)) continue;
 
+          // Enforce volume & volatility qualification
+          if (!asset.isQualified) continue;
+
+          // Skip symbols in 60s cooldown from rejected execution or signal mismatch
+          const lastRejected = rejectedSymbolsCooldownRef.current.get(asset.symbol) || 0;
+          if (Date.now() - lastRejected < 60000) continue;
+
           if (asset.signalStatus === 'CONFIRMED_BUY') {
-            executeTradeRef.current(asset.symbol, cat.id, 'LONG');
-            return;
+            lastCategoryIndexRef.current = (currentCatIdx + 1) % totalCats;
+            const executed = await executeTradeRef.current(asset.symbol, cat.id, 'LONG');
+            if (executed) {
+              return; // Trade placed successfully, finish tick
+            }
           } else if (asset.signalStatus === 'CONFIRMED_SELL') {
-            executeTradeRef.current(asset.symbol, cat.id, 'SHORT');
-            return;
+            lastCategoryIndexRef.current = (currentCatIdx + 1) % totalCats;
+            const executed = await executeTradeRef.current(asset.symbol, cat.id, 'SHORT');
+            if (executed) {
+              return; // Trade placed successfully, finish tick
+            }
           }
         }
       }
     }, 10000);
 
     return () => clearInterval(interval);
-  }, [categories, settings.autoTradingEnabled]);
+  }, [settings.autoTradingEnabled]);
 
   // Actual Realized & Unrealized PnL based on live balance benchmark
   const actualProfitDollar = liveStartingBalance > 0 ? liveCurrentBalance - liveStartingBalance : 0;
@@ -1027,20 +1194,26 @@ export default function HomePage() {
             }}
             userIp={userIp}
             onSaveSettings={(newSettings) => {
+              const maxPos = newSettings.maxOpenPositions && newSettings.maxOpenPositions > 0
+                ? newSettings.maxOpenPositions
+                : settings.maxOpenPositions;
+
               setSettings(prev => ({
                 ...prev,
                 apiKey: newSettings.apiKey,
                 apiSecret: newSettings.apiSecret,
                 autoShieldEnabled: newSettings.autoShieldEnabled !== false,
                 isLiveTrading: true,
+                maxOpenPositions: maxPos,
               }));
 
               try {
                 localStorage.setItem('monorid_binance_api_key', newSettings.apiKey);
                 localStorage.setItem('monorid_binance_api_secret', newSettings.apiSecret);
+                localStorage.setItem('monorid_binance_max_positions', String(maxPos));
               } catch {}
 
-              addLog('SYSTEM', 'SUCCESS', 'Binance Futures API credentials saved securely. Testing live connection and fetching balances...');
+              addLog('SYSTEM', 'SUCCESS', `Binance Futures API credentials and settings saved successfully. Max Open Positions set to ${maxPos}. Testing live connection and fetching balances...`);
               syncAccountData(newSettings.apiKey, newSettings.apiSecret);
               syncTradeHistory(newSettings.apiKey, newSettings.apiSecret);
             }}

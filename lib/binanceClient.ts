@@ -531,15 +531,29 @@ export async function executeRealTrade(
     throw new Error(`Unable to fetch real execution price for ${symbol}`);
   }
 
-  const notional = margin * leverage;
+  let effectiveMargin = margin;
+  let notional = effectiveMargin * leverage;
+
+  // For symbols requiring $5 min notional, clamp margin to meet minNotional floor
+  if (notional < minNotional && minNotional <= 5.5) {
+    effectiveMargin = (minNotional + 0.05) / leverage;
+    notional = effectiveMargin * leverage;
+  }
+
   if (notional < minNotional) {
     const minReqMargin = minNotional / leverage;
     throw new Error(`Order notional ($${notional.toFixed(2)}) is below Binance minimum threshold ($${minNotional.toFixed(2)}). Requires at least $${minReqMargin.toFixed(2)} margin at ${leverage}x leverage.`);
   }
 
-  const rawQty = notional / currentPrice;
-  const formattedQty = formatQuantity(rawQty, stepSize, quantityPrecision);
-  const quantity = parseFloat(formattedQty);
+  let rawQty = notional / currentPrice;
+  let formattedQty = formatQuantity(rawQty, stepSize, quantityPrecision);
+  let quantity = parseFloat(formattedQty);
+
+  // Guard against floor/truncation precision causing actual executed notional to drop below minNotional
+  if (quantity * currentPrice < minNotional) {
+    quantity = roundToStep(quantity + stepSize, stepSize);
+    formattedQty = formatQuantity(quantity, stepSize, quantityPrecision);
+  }
 
   if (quantity < (filter?.minQty || 0.0001)) {
     throw new Error(`Order size ${formattedQty} for ${symbol} is below minimum allowed lot size (${filter?.minQty}).`);
@@ -606,9 +620,9 @@ export async function executeRealTrade(
     symbol,
     side,
     executedPrice,
-    quantity,
+    quantity: parseFloat(formattedQty),
     leverage,
-    margin,
+    margin: effectiveMargin,
     entryOrderId: entryOrder.orderId,
     stopLossOrderId: stopLossOrder?.algoId || stopLossOrder?.orderId,
     takeProfitOrderId: takeProfitOrder?.algoId || takeProfitOrder?.orderId,

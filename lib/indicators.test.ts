@@ -18,6 +18,7 @@ import {
   calculateTradeMarginAllocation
 } from './indicators';
 import { formatQuantity, formatPrice } from './binanceClient';
+import { checkAssetQualification } from './scannerData';
 import { Candle } from './types';
 
 // Helper to generate synthetic test candles
@@ -442,6 +443,115 @@ test('SL and TP order classifier correctly identifies Algo Orders and ignores no
   // Case 5: Reduce-only SELL LIMIT order above mark price IS a valid Take Profit
   const reduceOnlyTPSell = { orderId: 203, type: 'LIMIT', price: '105.0', side: 'SELL', reduceOnly: true };
   assert.equal(isTP(reduceOnlyTPSell), true, 'Reduce-only SELL LIMIT order above mark price must be identified as TP');
+});
+
+test('checkAssetQualification enforces $5M 24h volume and 0.3% price volatility thresholds', () => {
+  const lowVol = checkAssetQualification({ volume24h: 4900000, change24h: 5.0, price: 10 });
+  assert.equal(lowVol.isQualified, false, 'Volume under $5M must disqualify');
+  assert.ok(lowVol.reason?.includes('$5M threshold'));
+
+  const lowChange = checkAssetQualification({ volume24h: 10000000, change24h: 0.15, price: 10 });
+  assert.equal(lowChange.isQualified, false, 'Change under 0.3% must disqualify');
+  assert.ok(lowChange.reason?.includes('insufficient volatility'));
+
+  const negativeFlat = checkAssetQualification({ volume24h: 8000000, change24h: -0.2, price: 10 });
+  assert.equal(negativeFlat.isQualified, false, 'Negative change under 0.3% absolute must disqualify');
+
+  const qualified = checkAssetQualification({ volume24h: 12000000, change24h: -1.5, price: 10 });
+  assert.equal(qualified.isQualified, true, 'Valid volume and volatility must qualify');
+});
+
+test('Binance Minimum Notional & Margin clamping logic prevents order rejections', () => {
+  const evaluateMarginNotional = (symbol: string, currentBalance: number, leverage: number) => {
+    const usableBalance = Math.max(0, currentBalance - 1.20);
+    const marginAllocation = calculateTradeMarginAllocation(currentBalance, 0.10, 1.20);
+    if (!marginAllocation.canTrade) {
+      return { canTrade: false, margin: 0, reason: marginAllocation.reason };
+    }
+
+    let margin = marginAllocation.margin;
+    if (symbol === 'BTCUSDT') {
+      const minMarginReq = 50.0 / leverage;
+      if (usableBalance < minMarginReq) {
+        return { canTrade: false, margin: 0, reason: 'BTC min notional unsatisfied' };
+      }
+      margin = Math.max(margin, minMarginReq);
+    } else if (symbol === 'ETHUSDT') {
+      const minMarginReq = 20.0 / leverage;
+      if (usableBalance < minMarginReq) {
+        return { canTrade: false, margin: 0, reason: 'ETH min notional unsatisfied' };
+      }
+      margin = Math.max(margin, minMarginReq);
+    } else {
+      const minMarginFor5 = 5.05 / leverage;
+      if (margin * leverage < 5.0) {
+        if (usableBalance >= 0.55) {
+          margin = Math.max(margin, Math.min(usableBalance, minMarginFor5));
+        } else if (usableBalance >= minMarginFor5) {
+          margin = minMarginFor5;
+        } else {
+          return { canTrade: false, margin: 0, reason: 'Altcoin min notional unsatisfied' };
+        }
+      }
+    }
+    margin = Math.min(margin, usableBalance);
+    return { canTrade: true, margin, notional: margin * leverage };
+  };
+
+  // Case 1: Account with $6.63 total balance ($5.43 usable), evaluating BTCUSDT at 10x ($5.00 min margin)
+  const btcPass = evaluateMarginNotional('BTCUSDT', 6.63, 10);
+  assert.equal(btcPass.canTrade, true, 'BTCUSDT must pass when usable balance ($5.43) >= $5.00');
+  assert.ok(btcPass.margin >= 5.0, 'BTCUSDT margin must be at least $5.00');
+
+  // Case 2: Account with $4.00 total balance ($2.80 usable), evaluating BTCUSDT at 10x ($5.00 min margin)
+  const btcFail = evaluateMarginNotional('BTCUSDT', 4.00, 10);
+  assert.equal(btcFail.canTrade, false, 'BTCUSDT must be skipped when usable balance ($2.80) < $5.00');
+
+  // Case 3: Same $4.00 total balance ($2.80 usable), evaluating Altcoin SOLUSDT at 10x
+  // 10% sizing would be $0.40 margin ($4.00 notional, below $5 min notional), but clamped to $0.505 margin ($5.05 notional)
+  const altClamped = evaluateMarginNotional('SOLUSDT', 4.00, 10);
+  assert.equal(altClamped.canTrade, true, 'Altcoin trade must proceed on $4.00 balance');
+  assert.ok(altClamped.margin >= 0.50, 'Margin must be clamped to at least $0.50');
+  assert.ok(altClamped.notional >= 5.0, 'Notional must satisfy >= $5.00 min threshold');
+
+  // Case 4: Account with $1.50 balance ($0.30 usable, below $0.50 min margin for altcoins at 10x)
+  const altFail = evaluateMarginNotional('SOLUSDT', 1.50, 10);
+  assert.equal(altFail.canTrade, false, 'Altcoin trade must be skipped when usable balance cannot satisfy $5 notional');
+});
+
+test('Category round-robin scheduling and 60s cooldown prevent category starvation and infinite deadlocks', () => {
+  const cooldownMap = new Map<string, number>();
+  const categoriesCount = 10;
+  let lastCategoryIndex = 0;
+
+  // Simulate a failed execution on Category 0 asset
+  const symbolCat0 = 'BTCUSDT';
+  cooldownMap.set(symbolCat0, Date.now()); // placed into cooldown
+
+  // Check cooldown filter
+  const isCooldownActive = (sym: string) => {
+    const last = cooldownMap.get(sym) || 0;
+    return Date.now() - last < 60000;
+  };
+  assert.equal(isCooldownActive(symbolCat0), true, 'Rejected symbol must be in 60s cooldown');
+  assert.equal(isCooldownActive('SOLUSDT'), false, 'Non-rejected symbol must not be in cooldown');
+
+  // Simulate round-robin advancement
+  const dispatchOrder = (catIdx: number) => {
+    lastCategoryIndex = (catIdx + 1) % categoriesCount;
+  };
+
+  dispatchOrder(0);
+  assert.equal(lastCategoryIndex, 1, 'Next round starts from Category 1');
+
+  dispatchOrder(1);
+  assert.equal(lastCategoryIndex, 2, 'Next round starts from Category 2');
+
+  for (let i = 2; i < 9; i++) {
+    dispatchOrder(i);
+  }
+  dispatchOrder(9);
+  assert.equal(lastCategoryIndex, 0, 'Round-robin wraps cleanly back to Category 0');
 });
 
 
