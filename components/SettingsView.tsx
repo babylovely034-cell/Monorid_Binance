@@ -260,6 +260,28 @@ export default function SettingsView({
           )}
         </div>
 
+        {/* SECTION 2.5: Auto-Shield Running Trade Protection */}
+        <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-5 shadow-sm space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-5 h-5 text-emerald-400" />
+              <h3 className="text-sm font-bold text-white">Auto-Shield Running Trade Protection</h3>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={formData.autoShieldEnabled !== false}
+                onChange={(e) => setFormData(prev => ({ ...prev, autoShieldEnabled: e.target.checked }))}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+            </label>
+          </div>
+          <p className="text-xs text-slate-400">
+            Automatically monitors all running trades on Binance Futures. Any open position detected without a Stop Loss or Take Profit will automatically have protective 1:2 RR TP/SL orders placed on Binance.
+          </p>
+        </div>
+
         {/* SECTION 3: Strictly Locked Strategy Parameters (Autonomous & Non-Editable) */}
         <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
           <div className="flex items-center justify-between">

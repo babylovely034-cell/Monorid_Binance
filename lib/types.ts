@@ -185,6 +185,7 @@ export interface TradingSettings {
   swingLookbackBars: number;
   maxOpenPositions: number;
   autoTradingEnabled: boolean;
+  autoShieldEnabled?: boolean; // Automatically add and maintain 1:2 RR TP/SL for running trades
   useTrailingStop: boolean;
   trailingActivationPercent: number;
   whitelistedIp: string;

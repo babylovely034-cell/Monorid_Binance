@@ -54,6 +54,7 @@ const DEFAULT_SETTINGS: TradingSettings = {
   swingLookbackBars: 5,
   maxOpenPositions: 5,
   autoTradingEnabled: true,
+  autoShieldEnabled: true,
   useTrailingStop: false,
   trailingActivationPercent: 1.5,
   whitelistedIp: '104.28.192.45',
@@ -100,10 +101,16 @@ export default function HomePage() {
   const [liveAvailableBalance, setLiveAvailableBalance] = useState<number>(0);
   const [pnlHistory, setPnlHistory] = useState<PnLDataPoint[]>([]);
 
+  const [protectingSymbols, setProtectingSymbols] = useState<string[]>([]);
+  const [isProtectingAll, setIsProtectingAll] = useState<boolean>(false);
+
   const positionsRef = useRef<Position[]>(positions);
   const settingsRef = useRef<TradingSettings>(settings);
   const currentBalanceRef = useRef<number>(liveCurrentBalance);
   const handleTickerUpdateRef = useRef<(ticker: TickerUpdate) => void>(() => {});
+  const inFlightProtectRef = useRef<Set<string>>(new Set());
+  const lastProtectAttemptRef = useRef<Map<string, number>>(new Map());
+  const handleProtectPositionRef = useRef<(symbol: string, sl?: number, tp?: number) => Promise<void>>((async () => {}) as any);
 
   useEffect(() => {
     positionsRef.current = positions;
@@ -223,6 +230,21 @@ export default function HomePage() {
               };
             });
           });
+
+          // Auto-Shield running trades that have no TP and SL
+          if (settingsRef.current.autoShieldEnabled !== false) {
+            const now = Date.now();
+            for (const livePos of data.openPositions) {
+              const needsShield = (!livePos.stopLoss || livePos.stopLoss === 0) || (!livePos.takeProfit || livePos.takeProfit === 0);
+              const lastAttempt = lastProtectAttemptRef.current.get(livePos.symbol) || 0;
+              const isCoolingDown = now - lastAttempt < 20000; // 20s cooldown
+              const isInFlight = inFlightProtectRef.current.has(livePos.symbol);
+
+              if (needsShield && !isCoolingDown && !isInFlight) {
+                handleProtectPositionRef.current(livePos.symbol);
+              }
+            }
+          }
         }
       }
     } catch {
@@ -768,9 +790,14 @@ export default function HomePage() {
     }
   };
 
-  const handleProtectPosition = async (symbol: string) => {
+  const handleProtectPosition = async (symbol: string, customStopLoss?: number, customTakeProfit?: number) => {
+    if (inFlightProtectRef.current.has(symbol)) return;
+    inFlightProtectRef.current.add(symbol);
+    lastProtectAttemptRef.current.set(symbol, Date.now());
+    setProtectingSymbols(prev => Array.from(new Set([...prev, symbol])));
+
     try {
-      addLog('EXECUTION', 'INFO', `Placing 1:2 RR Take Profit and Stop Loss for ${symbol} on Binance Futures...`, symbol);
+      addLog('TP_SL', 'INFO', `Placing protective 1:2 RR Take Profit and Stop Loss for ${symbol} on Binance Futures...`, symbol);
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (settings.apiKey) headers['x-binance-api-key'] = settings.apiKey;
       if (settings.apiSecret) headers['x-binance-api-secret'] = settings.apiSecret;
@@ -778,29 +805,82 @@ export default function HomePage() {
       const res = await fetch('/api/binance/tpsl', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ symbol })
+        body: JSON.stringify({ symbol, stopLoss: customStopLoss, takeProfit: customTakeProfit })
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.message || 'Failed to place TP/SL');
       }
 
+      setPositions(prev => prev.map(p => {
+        if (p.symbol === symbol) {
+          return {
+            ...p,
+            stopLoss: data.stopLoss || p.stopLoss,
+            takeProfit: data.takeProfit || p.takeProfit,
+            stopLossOrderId: data.stopLossOrderId || p.stopLossOrderId,
+            takeProfitOrderId: data.takeProfitOrderId || p.takeProfitOrderId
+          };
+        }
+        return p;
+      }));
+
       addLog(
-        'EXECUTION',
+        'TP_SL',
         'SUCCESS',
-        `[SHIELD ACTIVE] Stop Loss set at ${data.stopLoss} and Take Profit set at ${data.takeProfit} (1:2 RR) for ${symbol}!`,
+        `[SHIELD ACTIVE] Stop Loss set at $${data.stopLoss} and Take Profit set at $${data.takeProfit} (1:2 RR) for ${symbol}!`,
         symbol
       );
       syncAccountData(settings.apiKey, settings.apiSecret);
     } catch (err: any) {
       addLog(
-        'EXECUTION',
+        'TP_SL',
         'ERROR',
         `Failed to set TP/SL for ${symbol}: ${err?.message || err}. Ensure Binance API Key has "Enable Futures" enabled and IP ${userIp || '108.131.84.219'} whitelisted.`,
         symbol
       );
+    } finally {
+      inFlightProtectRef.current.delete(symbol);
+      setProtectingSymbols(prev => prev.filter(s => s !== symbol));
     }
   };
+
+  const handleProtectAllPositions = async () => {
+    if (isProtectingAll) return;
+    setIsProtectingAll(true);
+    addLog('TP_SL', 'INFO', 'Shielding all active running trades on Binance with 1:2 RR TP/SL...');
+
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (settings.apiKey) headers['x-binance-api-key'] = settings.apiKey;
+      if (settings.apiSecret) headers['x-binance-api-secret'] = settings.apiSecret;
+
+      const res = await fetch('/api/binance/tpsl', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ protectAll: true })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        addLog(
+          'TP_SL',
+          'SUCCESS',
+          `[SHIELD ALL COMPLETE] Protected ${data.protectedCount || 0} of ${data.totalPositions || 0} running trades with 1:2 RR TP/SL!`
+        );
+        syncAccountData(settings.apiKey, settings.apiSecret);
+      } else {
+        throw new Error(data.message || 'Protect all failed');
+      }
+    } catch (err: any) {
+      addLog('TP_SL', 'ERROR', `Failed to protect all positions: ${err?.message || err}`);
+    } finally {
+      setIsProtectingAll(false);
+    }
+  };
+
+  useEffect(() => {
+    handleProtectPositionRef.current = handleProtectPosition;
+  });
 
   // 9. Autonomous Bot Strategy Loop
   const executeTradeRef = useRef(executeTrade);
@@ -885,6 +965,15 @@ export default function HomePage() {
             positions={positions}
             onClosePosition={handleEmergencyClose}
             onProtectPosition={handleProtectPosition}
+            onProtectAllPositions={handleProtectAllPositions}
+            isProtectingAll={isProtectingAll}
+            protectingSymbols={protectingSymbols}
+            autoShieldEnabled={settings.autoShieldEnabled !== false}
+            onToggleAutoShield={() => {
+              const nextState = settings.autoShieldEnabled === false ? true : false;
+              setSettings(s => ({ ...s, autoShieldEnabled: nextState }));
+              addLog('SYSTEM', 'INFO', `Auto-Shield running trade protection ${nextState ? 'ENABLED' : 'DISABLED'}.`);
+            }}
           />
         )}
 
@@ -915,6 +1004,7 @@ export default function HomePage() {
                 ...prev,
                 apiKey: newSettings.apiKey,
                 apiSecret: newSettings.apiSecret,
+                autoShieldEnabled: newSettings.autoShieldEnabled !== false,
                 isLiveTrading: true,
               }));
 

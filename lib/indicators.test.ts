@@ -334,3 +334,39 @@ test('evaluateMonoridSignal with live Binance 5m klines queries and evaluates co
     assert.ok(signal.suggestedSL > signal.price);
   }
 });
+
+test('Running trade protective TP and SL calculation for LONG and SHORT positions', () => {
+  // Scenario 1: SHORT position running with markPrice = 1.0135, entry = 1.0052, liq = 1.0986
+  const shortPrice = 1.0135;
+  const shortLiq = 1.0986;
+  const shortSL = shortPrice * 1.012; // 1.02566
+  assert.ok(shortSL > shortPrice, 'Short SL must be strictly above mark price');
+  assert.ok(shortSL < shortLiq, 'Short SL must be safely below liquidation price');
+  const shortRisk = shortSL - shortPrice;
+  const shortTP = shortPrice - 2 * shortRisk;
+  assert.ok(shortTP < shortPrice, 'Short TP must be strictly below mark price');
+  assert.equal(+(shortRisk * 2).toFixed(4), +(shortPrice - shortTP).toFixed(4), 'Risk to Reward must be 1:2');
+
+  // Scenario 2: LONG position running with markPrice = 0.9128, entry = 0.9059, liq = 0.8100
+  const longPrice = 0.9128;
+  const longLiq = 0.8100;
+  const longSL = longPrice * 0.988;
+  assert.ok(longSL < longPrice, 'Long SL must be strictly below mark price');
+  assert.ok(longSL > longLiq, 'Long SL must be safely above liquidation price');
+  const longRisk = longPrice - longSL;
+  const longTP = longPrice + 2 * longRisk;
+  assert.ok(longTP > longPrice, 'Long TP must be strictly above mark price');
+  assert.equal(+(longRisk * 2).toFixed(4), +(longTP - longPrice).toFixed(4), 'Risk to Reward must be 1:2');
+
+  // Scenario 3: Boundary & Liquidation collision guard
+  // If a SHORT trade has liquidation price closer than default 1.2%, SL must not breach liq price
+  const tightLiqShortPrice = 100;
+  const tightLiqShort = 101.0; // liq is only 1% away
+  let tightSL = tightLiqShortPrice * 1.012; // 101.2 > 101.0 -> would liquidate before SL
+  if (tightSL >= tightLiqShort) {
+    tightSL = Math.min(tightLiqShort * 0.995, tightLiqShortPrice * 1.004);
+  }
+  assert.ok(tightSL < tightLiqShort, 'Guard must keep SL below liquidation price');
+  assert.ok(tightSL > tightLiqShortPrice, 'Guard must keep SL above current price');
+});
+

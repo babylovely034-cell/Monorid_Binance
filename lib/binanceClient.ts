@@ -276,8 +276,13 @@ export async function getBinanceAccountOverview(apiKey: string, apiSecret: strin
 
       // Find open SL and TP orders for this symbol
       const symbolOrders = Array.isArray(openOrders) ? openOrders.filter((o: any) => o.symbol === p.symbol) : [];
-      const slOrder = symbolOrders.find((o: any) => o.type === 'STOP_MARKET' || o.type === 'STOP');
-      const tpOrder = symbolOrders.find((o: any) => o.type === 'TAKE_PROFIT_MARKET' || o.type === 'TAKE_PROFIT');
+      const slOrder = symbolOrders.find((o: any) => 
+        o.type === 'STOP_MARKET' || o.type === 'STOP' || o.origType === 'STOP_MARKET' || o.origType === 'STOP' ||
+        o.type === 'STOP_LOSS' || o.origType === 'STOP_LOSS'
+      );
+      const tpOrder = symbolOrders.find((o: any) => 
+        o.type === 'TAKE_PROFIT_MARKET' || o.type === 'TAKE_PROFIT' || o.origType === 'TAKE_PROFIT_MARKET' || o.origType === 'TAKE_PROFIT'
+      );
 
       return {
         id: `binance-${p.symbol}-${p.updateTime || Date.now()}`,
@@ -600,6 +605,7 @@ export async function setOrUpdatePositionTPSL(
   const entryPrice = parseFloat(pos.entryPrice);
   const markPrice = parseFloat(pos.markPrice);
   const currentPrice = markPrice > 0 ? markPrice : entryPrice;
+  const liqPrice = parseFloat(pos.liquidationPrice) || 0;
 
   // 2. Precision filters
   const filters = await getExchangeSymbolFilters();
@@ -614,26 +620,72 @@ export async function setOrUpdatePositionTPSL(
   let stopLoss = customStopLoss;
   let takeProfit = customTakeProfit;
 
-  if (!stopLoss) {
-    if (isLong) {
+  if (isLong) {
+    // For LONG: SL must be strictly below currentPrice (at least 0.4% below, default 1.2% below)
+    if (!stopLoss || stopLoss >= currentPrice * 0.996) {
       stopLoss = currentPrice * 0.988;
-    } else {
+    }
+    // Liquidation shield: SL must be above liquidation price
+    if (liqPrice > 0 && stopLoss <= liqPrice) {
+      const safeAboveLiq = liqPrice * 1.005;
+      if (safeAboveLiq < currentPrice * 0.996) {
+        stopLoss = safeAboveLiq;
+      } else {
+        stopLoss = (currentPrice + liqPrice) / 2;
+      }
+    }
+
+    // For LONG: TP must be strictly above currentPrice with 1:2 Risk to Reward
+    const risk = Math.max(currentPrice - stopLoss, currentPrice * 0.005);
+    const minReward = Math.max(risk * 2, currentPrice * 0.01);
+    if (!takeProfit || takeProfit <= currentPrice * 1.004) {
+      takeProfit = currentPrice + minReward;
+    }
+  } else {
+    // For SHORT: SL must be strictly above currentPrice (at least 0.4% above, default 1.2% above)
+    if (!stopLoss || stopLoss <= currentPrice * 1.004) {
       stopLoss = currentPrice * 1.012;
     }
-  }
+    // Liquidation shield: SL must be below liquidation price
+    if (liqPrice > 0 && stopLoss >= liqPrice) {
+      const safeBelowLiq = liqPrice * 0.995;
+      if (safeBelowLiq > currentPrice * 1.004) {
+        stopLoss = safeBelowLiq;
+      } else {
+        stopLoss = (currentPrice + liqPrice) / 2;
+      }
+    }
 
-  if (!takeProfit) {
-    if (isLong) {
-      const risk = currentPrice - stopLoss;
-      takeProfit = currentPrice + 2 * Math.max(risk, currentPrice * 0.005);
-    } else {
-      const risk = stopLoss - currentPrice;
-      takeProfit = currentPrice - 2 * Math.max(risk, currentPrice * 0.005);
+    // For SHORT: TP must be strictly below currentPrice with 1:2 Risk to Reward
+    const risk = Math.max(stopLoss - currentPrice, currentPrice * 0.005);
+    const minReward = Math.max(risk * 2, currentPrice * 0.01);
+    if (!takeProfit || takeProfit >= currentPrice * 0.996) {
+      takeProfit = currentPrice - minReward;
     }
   }
 
-  const formattedSL = formatPrice(stopLoss, tickSize, pricePrecision);
-  const formattedTP = formatPrice(takeProfit, tickSize, pricePrecision);
+  let formattedSL = formatPrice(stopLoss, tickSize, pricePrecision);
+  let formattedTP = formatPrice(takeProfit, tickSize, pricePrecision);
+
+  // Guarantee formatted SL and TP never round to equal or cross currentPrice
+  const numSL = parseFloat(formattedSL);
+  const numTP = parseFloat(formattedTP);
+  if (isLong) {
+    if (numSL >= currentPrice) {
+      formattedSL = formatPrice(currentPrice - tickSize * 2, tickSize, pricePrecision);
+    }
+    if (numTP <= currentPrice) {
+      formattedTP = formatPrice(currentPrice + tickSize * 4, tickSize, pricePrecision);
+    }
+  } else {
+    if (numSL <= currentPrice) {
+      formattedSL = formatPrice(currentPrice + tickSize * 2, tickSize, pricePrecision);
+    }
+    if (numTP >= currentPrice) {
+      formattedTP = formatPrice(currentPrice - tickSize * 4, tickSize, pricePrecision);
+    }
+  }
+
   const exitSide = isLong ? 'SELL' : 'BUY';
 
   // 4. Cancel existing open orders for symbol to prevent multiple conflicting SL/TP orders
@@ -641,7 +693,9 @@ export async function setOrUpdatePositionTPSL(
     await sendSignedRequest('DELETE', '/fapi/v1/allOpenOrders', { symbol }, apiKey, apiSecret);
   } catch {}
 
-  // 5. Place Stop Loss Order (STOP_MARKET)
+  // 5. Place Stop Loss Order (STOP_MARKET) with automatic fallback
+  let stopLossOrder: any = null;
+  let stopLossError: string | null = null;
   const slParams: Record<string, any> = {
     symbol,
     side: exitSide,
@@ -657,9 +711,33 @@ export async function setOrUpdatePositionTPSL(
     slParams.closePosition = 'true';
   }
 
-  const stopLossOrder = await sendSignedRequest('POST', '/fapi/v1/order', slParams, apiKey, apiSecret);
+  try {
+    stopLossOrder = await sendSignedRequest('POST', '/fapi/v1/order', slParams, apiKey, apiSecret);
+  } catch (err: any) {
+    if (!isDualSide && slParams.closePosition === 'true') {
+      try {
+        const fallbackParams = {
+          symbol,
+          side: exitSide,
+          type: 'STOP_MARKET',
+          stopPrice: formattedSL,
+          quantity: formattedQty,
+          reduceOnly: 'true',
+          positionSide: 'BOTH',
+          workingType: 'MARK_PRICE'
+        };
+        stopLossOrder = await sendSignedRequest('POST', '/fapi/v1/order', fallbackParams, apiKey, apiSecret);
+      } catch (fallbackErr: any) {
+        stopLossError = fallbackErr?.message || err?.message || String(err);
+      }
+    } else {
+      stopLossError = err?.message || String(err);
+    }
+  }
 
-  // 6. Place Take Profit Order (TAKE_PROFIT_MARKET)
+  // 6. Place Take Profit Order (TAKE_PROFIT_MARKET) with automatic fallback
+  let takeProfitOrder: any = null;
+  let takeProfitError: string | null = null;
   const tpParams: Record<string, any> = {
     symbol,
     side: exitSide,
@@ -675,16 +753,104 @@ export async function setOrUpdatePositionTPSL(
     tpParams.closePosition = 'true';
   }
 
-  const takeProfitOrder = await sendSignedRequest('POST', '/fapi/v1/order', tpParams, apiKey, apiSecret);
+  try {
+    takeProfitOrder = await sendSignedRequest('POST', '/fapi/v1/order', tpParams, apiKey, apiSecret);
+  } catch (err: any) {
+    if (!isDualSide && tpParams.closePosition === 'true') {
+      try {
+        const fallbackParams = {
+          symbol,
+          side: exitSide,
+          type: 'TAKE_PROFIT_MARKET',
+          stopPrice: formattedTP,
+          quantity: formattedQty,
+          reduceOnly: 'true',
+          positionSide: 'BOTH',
+          workingType: 'MARK_PRICE'
+        };
+        takeProfitOrder = await sendSignedRequest('POST', '/fapi/v1/order', fallbackParams, apiKey, apiSecret);
+      } catch (fallbackErr: any) {
+        takeProfitError = fallbackErr?.message || err?.message || String(err);
+      }
+    } else {
+      takeProfitError = err?.message || String(err);
+    }
+  }
+
+  if (!stopLossOrder && !takeProfitOrder) {
+    throw new Error(`Failed to place TP/SL for ${symbol}. SL: ${stopLossError || 'Failed'}; TP: ${takeProfitError || 'Failed'}`);
+  }
 
   return {
     success: true,
     symbol,
-    side: isLong ? 'LONG' : 'SHORT',
+    side: isLong ? ('LONG' as const) : ('SHORT' as const),
     currentPrice,
-    stopLoss: parseFloat(formattedSL),
-    takeProfit: parseFloat(formattedTP),
+    stopLoss: stopLossOrder ? parseFloat(formattedSL) : 0,
+    takeProfit: takeProfitOrder ? parseFloat(formattedTP) : 0,
     stopLossOrderId: stopLossOrder?.orderId,
-    takeProfitOrderId: takeProfitOrder?.orderId
+    takeProfitOrderId: takeProfitOrder?.orderId,
+    stopLossError,
+    takeProfitError
+  };
+}
+
+/**
+ * Protects all active Binance Futures positions that lack Stop Loss or Take Profit
+ */
+export async function setOrUpdateAllPositionsTPSL(apiKey: string, apiSecret: string) {
+  // 1. Fetch current open positions
+  const positionRisks = await sendSignedRequest('GET', '/fapi/v2/positionRisk', {}, apiKey, apiSecret);
+  const activePositions = (Array.isArray(positionRisks) ? positionRisks : [])
+    .filter((p: any) => parseFloat(p.positionAmt) !== 0);
+
+  if (activePositions.length === 0) {
+    return {
+      success: true,
+      totalPositions: 0,
+      protectedCount: 0,
+      results: [],
+      message: 'No open positions found on Binance Futures to protect.'
+    };
+  }
+
+  // 2. Fetch current open orders to identify positions without SL or TP
+  let openOrders: any[] = [];
+  try {
+    openOrders = await sendSignedRequest('GET', '/fapi/v1/openOrders', {}, apiKey, apiSecret);
+  } catch {}
+
+  const results: any[] = [];
+  for (const pos of activePositions) {
+    const sym = pos.symbol;
+    const symOrders = Array.isArray(openOrders) ? openOrders.filter((o: any) => o.symbol === sym) : [];
+    const hasSL = symOrders.some((o: any) => 
+      o.type === 'STOP_MARKET' || o.type === 'STOP' || o.origType === 'STOP_MARKET' || o.origType === 'STOP' ||
+      o.type === 'STOP_LOSS' || o.origType === 'STOP_LOSS'
+    );
+    const hasTP = symOrders.some((o: any) => 
+      o.type === 'TAKE_PROFIT_MARKET' || o.type === 'TAKE_PROFIT' || o.origType === 'TAKE_PROFIT_MARKET' || o.origType === 'TAKE_PROFIT'
+    );
+
+    // If missing SL or TP, place full 1:2 RR protection
+    if (!hasSL || !hasTP) {
+      try {
+        const res = await setOrUpdatePositionTPSL(sym, apiKey, apiSecret);
+        results.push(res);
+      } catch (err: any) {
+        results.push({
+          success: false,
+          symbol: sym,
+          error: err?.message || String(err)
+        });
+      }
+    }
+  }
+
+  return {
+    success: true,
+    totalPositions: activePositions.length,
+    protectedCount: results.filter(r => r.success).length,
+    results
   };
 }
