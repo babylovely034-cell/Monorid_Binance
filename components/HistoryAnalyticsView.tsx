@@ -19,29 +19,37 @@ import {
 
 interface HistoryAnalyticsViewProps {
   closedTrades: ClosedTrade[];
+  sessionStartTime?: number;
 }
 
 export default function HistoryAnalyticsView({
   closedTrades,
+  sessionStartTime,
 }: HistoryAnalyticsViewProps) {
+  const [viewScope, setViewScope] = useState<'CURRENT_RUN' | 'ACCOUNT_HISTORY'>('CURRENT_RUN');
   const [filterSide, setFilterSide] = useState<'ALL' | 'LONG' | 'SHORT'>('ALL');
   const [filterReason, setFilterReason] = useState<string>('ALL');
 
+  // Filter based on session scope
+  const activeTrades = viewScope === 'CURRENT_RUN'
+    ? closedTrades.filter(t => t.exitTime >= (sessionStartTime || 0))
+    : closedTrades;
+
   // Performance calculations
-  const totalTrades = closedTrades.length;
-  const winningTrades = closedTrades.filter(t => t.netPnl > 0);
-  const losingTrades = closedTrades.filter(t => t.netPnl < 0);
+  const totalTrades = activeTrades.length;
+  const winningTrades = activeTrades.filter(t => t.netPnl > 0);
+  const losingTrades = activeTrades.filter(t => t.netPnl < 0);
   const winRate = totalTrades > 0 ? (winningTrades.length / totalTrades) * 100 : 0;
 
-  const totalGrossPnl = closedTrades.reduce((sum, t) => sum + t.grossPnl, 0);
-  const totalFeesPaid = closedTrades.reduce((sum, t) => sum + t.totalFeesPaid, 0);
-  const totalNetPnl = closedTrades.reduce((sum, t) => sum + t.netPnl, 0);
+  const totalGrossPnl = activeTrades.reduce((sum, t) => sum + t.grossPnl, 0);
+  const totalFeesPaid = activeTrades.reduce((sum, t) => sum + t.totalFeesPaid, 0);
+  const totalNetPnl = activeTrades.reduce((sum, t) => sum + t.netPnl, 0);
 
   const grossProfit = winningTrades.reduce((sum, t) => sum + t.grossPnl, 0);
   const grossLoss = Math.abs(losingTrades.reduce((sum, t) => sum + t.grossPnl, 0));
   const profitFactor = grossLoss > 0 ? (grossProfit / grossLoss).toFixed(2) : (grossProfit > 0 ? 'MAX' : '0.00');
 
-  const filteredTrades = closedTrades.filter(t => {
+  const filteredTrades = activeTrades.filter(t => {
     if (filterSide !== 'ALL' && t.side !== filterSide) return false;
     if (filterReason !== 'ALL' && t.exitReason !== filterReason) return false;
     return true;

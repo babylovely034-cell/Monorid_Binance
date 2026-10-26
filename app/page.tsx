@@ -90,6 +90,7 @@ export default function HomePage() {
   const [categories, setCategories] = useState<CategorySummary[]>(buildInitialCategoriesState);
   const [positions, setPositions] = useState<Position[]>([]);
   const [closedTrades, setClosedTrades] = useState<ClosedTrade[]>([]);
+  const [sessionStartTime] = useState<number>(() => Date.now());
   const [logs, setLogs] = useState<LogEntry[]>(INITIAL_AUDIT_LOGS);
   const [settings, setSettings] = useState<TradingSettings>(DEFAULT_SETTINGS);
   const [userIp, setUserIp] = useState<string>('104.28.192.45');
@@ -271,7 +272,10 @@ export default function HomePage() {
       const data = await res.json();
 
       if (res.ok && data.success && Array.isArray(data.trades)) {
-        const formatted: ClosedTrade[] = data.trades.map((t: any) => {
+        // Filter out position entry fills (realizedPnl === 0) so only true closed trades are processed
+        const closingFills = data.trades.filter((t: any) => Math.abs(parseFloat(t.realizedPnl || '0')) > 0.000001);
+
+        const formatted: ClosedTrade[] = closingFills.map((t: any) => {
           const qty = parseFloat(t.qty);
           const price = parseFloat(t.price);
           const commission = parseFloat(t.commission || '0');
@@ -297,14 +301,12 @@ export default function HomePage() {
             totalFeesPaid: commission,
             netPnl: realizedPnl,
             netPnlPercent: margin > 0 ? (realizedPnl / margin) * 100 : 0,
-            exitReason: realizedPnl >= 0 ? 'TAKE_PROFIT' : 'STOP_LOSS',
-            riskRewardAchieved: realizedPnl >= 0 ? 2.0 : -1.0
+            exitReason: realizedPnl > 0 ? 'TAKE_PROFIT' : 'STOP_LOSS',
+            riskRewardAchieved: realizedPnl > 0 ? 2.0 : -1.0
           };
-        });
+        }).sort((a, b) => b.exitTime - a.exitTime); // Newest first
 
-        if (formatted.length > 0) {
-          setClosedTrades(formatted);
-        }
+        setClosedTrades(formatted);
       }
     } catch {
       // History sync error
@@ -999,6 +1001,7 @@ export default function HomePage() {
         {activeTab === 'history' && (
           <HistoryAnalyticsView
             closedTrades={closedTrades}
+            sessionStartTime={sessionStartTime}
           />
         )}
 

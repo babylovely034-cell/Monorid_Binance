@@ -681,9 +681,10 @@ export async function closeRealPosition(
 /**
  * Fetch real user trade history from Binance
  */
-export async function getRealUserTradeHistory(apiKey: string, apiSecret: string, symbol?: string, limit: number = 50) {
+export async function getRealUserTradeHistory(apiKey: string, apiSecret: string, symbol?: string, limit: number = 50, startTime?: number) {
   const params: Record<string, any> = { limit };
   if (symbol) params.symbol = symbol;
+  if (startTime) params.startTime = startTime;
 
   const trades = await sendSignedRequest('GET', '/fapi/v1/userTrades', params, apiKey, apiSecret);
   return trades;

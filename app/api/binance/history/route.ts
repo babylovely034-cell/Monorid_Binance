@@ -16,9 +16,10 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const symbol = searchParams.get('symbol') || undefined;
   const limit = parseInt(searchParams.get('limit') || '50', 10);
+  const startTime = searchParams.get('startTime') ? parseInt(searchParams.get('startTime')!, 10) : undefined;
 
   try {
-    const rawTrades = await getRealUserTradeHistory(apiKey, apiSecret, symbol, limit);
+    const rawTrades = await getRealUserTradeHistory(apiKey, apiSecret, symbol, limit, startTime);
     return NextResponse.json({
       success: true,
       trades: Array.isArray(rawTrades) ? rawTrades : []
