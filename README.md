@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/TypeScript-5.0+-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Binance-USDT--M_Futures-F0B90B?style=for-the-badge&logo=binance&logoColor=black" alt="Binance Futures" />
   <img src="https://img.shields.io/badge/Timeframe-5_Minutes-00F5FF?style=for-the-badge" alt="5m Timeframe" />
-  <img src="https://img.shields.io/badge/Tests-17%2F17_Passing-00E676?style=for-the-badge" alt="Unit Tests" />
+  <img src="https://img.shields.io/badge/Tests-20%2F20_Passing-00E676?style=for-the-badge" alt="Unit Tests" />
   <img src="https://img.shields.io/badge/Proprietary-Trading_Lifestyle_Quant-F59E0B?style=for-the-badge" alt="Trading Lifestyle Quant" />
 </p>
 
@@ -242,7 +242,7 @@ Verify mathematical calculations, risk formulas, fee models, and signal logic:
 ```bash
 npm test
 ```
-*Output: 18/18 tests passing with zero failures.*
+*Output: 20/20 tests passing with zero failures.*
 
 ### Production Build & Launch
 Compile optimized production bundles:
