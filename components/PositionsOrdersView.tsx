@@ -162,8 +162,16 @@ export default function PositionsOrdersView({
 
                       {/* Stop Loss (Swing Level) */}
                       <td className="py-3 px-4 text-right text-rose-400 font-semibold">
-                        <div>${pos.stopLoss.toFixed(4)}</div>
-                        <div className="text-[9px] text-slate-500">{distToSL.toFixed(2)}% away</div>
+                        {pos.stopLoss > 0 ? (
+                          <>
+                            <div>${pos.stopLoss.toFixed(4)}</div>
+                            <div className="text-[9px] text-slate-500">{distToSL.toFixed(2)}% away</div>
+                          </>
+                        ) : (
+                          <span className="text-[10px] text-amber-400 bg-amber-950/80 border border-amber-600/50 px-1.5 py-0.5 rounded font-bold inline-block">
+                            NO STOP LOSS
+                          </span>
+                        )}
                       </td>
 
                       {/* Liquidation Price */}
@@ -174,8 +182,16 @@ export default function PositionsOrdersView({
 
                       {/* Take Profit (1:2 RR Target) */}
                       <td className="py-3 px-4 text-right text-emerald-400 font-semibold">
-                        <div>${pos.takeProfit.toFixed(4)}</div>
-                        <div className="text-[9px] text-slate-500">{distToTP.toFixed(2)}% away</div>
+                        {pos.takeProfit > 0 ? (
+                          <>
+                            <div>${pos.takeProfit.toFixed(4)}</div>
+                            <div className="text-[9px] text-slate-500">{distToTP.toFixed(2)}% away</div>
+                          </>
+                        ) : (
+                          <span className="text-[10px] text-amber-400 bg-amber-950/80 border border-amber-600/50 px-1.5 py-0.5 rounded font-bold inline-block">
+                            NO TAKE PROFIT
+                          </span>
+                        )}
                       </td>
 
                       {/* Platform Fees */}
@@ -196,9 +212,21 @@ export default function PositionsOrdersView({
                       {/* Action / Exit Mode */}
                       <td className="py-3 px-4 text-right">
                         <div className="flex flex-col items-end gap-1.5">
-                          <span className="text-[10px] text-emerald-400 font-bold bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/30">
-                            AUTO TP (1:2) / SL
-                          </span>
+                          {pos.stopLoss > 0 && pos.takeProfit > 0 ? (
+                            <span className="text-[10px] text-emerald-400 font-bold bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/30">
+                              🛡️ PROTECTED (1:2 RR)
+                            </span>
+                          ) : (
+                            onProtectPosition && (
+                              <button
+                                type="button"
+                                onClick={() => onProtectPosition(pos.symbol)}
+                                className="text-[10px] text-cyan-300 hover:text-white bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-500/50 px-2 py-1 rounded font-bold transition-all shadow-[0_0_8px_rgba(6,182,212,0.3)] cursor-pointer"
+                              >
+                                🛡️ Set 1:2 TP/SL
+                              </button>
+                            )
+                          )}
                           {onClosePosition && (
                             <button
                               type="button"

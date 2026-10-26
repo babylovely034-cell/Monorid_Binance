@@ -576,3 +576,115 @@ export async function getBinance24hrTickers() {
   }
   return await res.json();
 }
+
+/**
+ * Sets or updates protective Take Profit and Stop Loss for an active open position
+ */
+export async function setOrUpdatePositionTPSL(
+  symbol: string,
+  apiKey: string,
+  apiSecret: string,
+  customStopLoss?: number,
+  customTakeProfit?: number
+) {
+  // 1. Fetch current open position
+  const positionRisks = await sendSignedRequest('GET', '/fapi/v2/positionRisk', { symbol }, apiKey, apiSecret);
+  const pos = Array.isArray(positionRisks) ? positionRisks.find((p: any) => p.symbol === symbol) : null;
+  const posAmt = pos ? parseFloat(pos.positionAmt) : 0;
+
+  if (posAmt === 0) {
+    throw new Error(`No open position found for ${symbol} on Binance USDT-M Futures.`);
+  }
+
+  const isLong = posAmt > 0;
+  const entryPrice = parseFloat(pos.entryPrice);
+  const markPrice = parseFloat(pos.markPrice);
+  const currentPrice = markPrice > 0 ? markPrice : entryPrice;
+
+  // 2. Precision filters
+  const filters = await getExchangeSymbolFilters();
+  const filter = filters.get(symbol);
+  const tickSize = filter?.tickSize || 0.01;
+  const stepSize = filter?.stepSize || 0.001;
+  const pricePrecision = filter?.pricePrecision || 2;
+  const isDualSide = await getDualSidePosition(apiKey, apiSecret);
+  const formattedQty = formatQuantity(Math.abs(posAmt), stepSize, filter?.quantityPrecision);
+
+  // 3. Calculate SL & TP if not explicitly supplied (1:2 Risk to Reward standard)
+  let stopLoss = customStopLoss;
+  let takeProfit = customTakeProfit;
+
+  if (!stopLoss) {
+    if (isLong) {
+      stopLoss = currentPrice * 0.988;
+    } else {
+      stopLoss = currentPrice * 1.012;
+    }
+  }
+
+  if (!takeProfit) {
+    if (isLong) {
+      const risk = currentPrice - stopLoss;
+      takeProfit = currentPrice + 2 * Math.max(risk, currentPrice * 0.005);
+    } else {
+      const risk = stopLoss - currentPrice;
+      takeProfit = currentPrice - 2 * Math.max(risk, currentPrice * 0.005);
+    }
+  }
+
+  const formattedSL = formatPrice(stopLoss, tickSize, pricePrecision);
+  const formattedTP = formatPrice(takeProfit, tickSize, pricePrecision);
+  const exitSide = isLong ? 'SELL' : 'BUY';
+
+  // 4. Cancel existing open orders for symbol to prevent multiple conflicting SL/TP orders
+  try {
+    await sendSignedRequest('DELETE', '/fapi/v1/allOpenOrders', { symbol }, apiKey, apiSecret);
+  } catch {}
+
+  // 5. Place Stop Loss Order (STOP_MARKET)
+  const slParams: Record<string, any> = {
+    symbol,
+    side: exitSide,
+    type: 'STOP_MARKET',
+    stopPrice: formattedSL,
+    workingType: 'MARK_PRICE'
+  };
+  if (isDualSide) {
+    slParams.positionSide = isLong ? 'LONG' : 'SHORT';
+    slParams.quantity = formattedQty;
+  } else {
+    slParams.positionSide = 'BOTH';
+    slParams.closePosition = 'true';
+  }
+
+  const stopLossOrder = await sendSignedRequest('POST', '/fapi/v1/order', slParams, apiKey, apiSecret);
+
+  // 6. Place Take Profit Order (TAKE_PROFIT_MARKET)
+  const tpParams: Record<string, any> = {
+    symbol,
+    side: exitSide,
+    type: 'TAKE_PROFIT_MARKET',
+    stopPrice: formattedTP,
+    workingType: 'MARK_PRICE'
+  };
+  if (isDualSide) {
+    tpParams.positionSide = isLong ? 'LONG' : 'SHORT';
+    tpParams.quantity = formattedQty;
+  } else {
+    tpParams.positionSide = 'BOTH';
+    tpParams.closePosition = 'true';
+  }
+
+  const takeProfitOrder = await sendSignedRequest('POST', '/fapi/v1/order', tpParams, apiKey, apiSecret);
+
+  return {
+    success: true,
+    symbol,
+    side: isLong ? 'LONG' : 'SHORT',
+    currentPrice,
+    stopLoss: parseFloat(formattedSL),
+    takeProfit: parseFloat(formattedTP),
+    stopLossOrderId: stopLossOrder?.orderId,
+    takeProfitOrderId: takeProfitOrder?.orderId
+  };
+}

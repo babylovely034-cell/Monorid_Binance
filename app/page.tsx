@@ -768,6 +768,40 @@ export default function HomePage() {
     }
   };
 
+  const handleProtectPosition = async (symbol: string) => {
+    try {
+      addLog('EXECUTION', 'INFO', `Placing 1:2 RR Take Profit and Stop Loss for ${symbol} on Binance Futures...`, symbol);
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (settings.apiKey) headers['x-binance-api-key'] = settings.apiKey;
+      if (settings.apiSecret) headers['x-binance-api-secret'] = settings.apiSecret;
+
+      const res = await fetch('/api/binance/tpsl', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ symbol })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to place TP/SL');
+      }
+
+      addLog(
+        'EXECUTION',
+        'SUCCESS',
+        `[SHIELD ACTIVE] Stop Loss set at ${data.stopLoss} and Take Profit set at ${data.takeProfit} (1:2 RR) for ${symbol}!`,
+        symbol
+      );
+      syncAccountData(settings.apiKey, settings.apiSecret);
+    } catch (err: any) {
+      addLog(
+        'EXECUTION',
+        'ERROR',
+        `Failed to set TP/SL for ${symbol}: ${err?.message || err}. Ensure Binance API Key has "Enable Futures" enabled and IP ${userIp || '108.131.84.219'} whitelisted.`,
+        symbol
+      );
+    }
+  };
+
   // 9. Autonomous Bot Strategy Loop
   const executeTradeRef = useRef(executeTrade);
   useEffect(() => {
@@ -850,6 +884,7 @@ export default function HomePage() {
           <PositionsOrdersView
             positions={positions}
             onClosePosition={handleEmergencyClose}
+            onProtectPosition={handleProtectPosition}
           />
         )}
 
