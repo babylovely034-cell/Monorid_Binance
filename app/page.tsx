@@ -412,6 +412,7 @@ export default function HomePage() {
       clearInterval(tickerInterval);
       clearInterval(klinesInterval);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

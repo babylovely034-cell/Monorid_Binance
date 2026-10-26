@@ -1,0 +1,15 @@
+services:
+  monorid-binance:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - APP_URL=${APP_URL:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - BINANCE_API_KEY=${BINANCE_API_KEY:-}
+      - BINANCE_API_SECRET=${BINANCE_API_SECRET:-}
